@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data:; connect-src 'none'">
 <title>UniFi Backup Explorer v2</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg==" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js" integrity="sha512-g2TeAWw5GPnX7z0Kn8nFbYfeHcvAu/tx6d6mrLe/90mkCxO+RcptyYpksUz35EO337F83bZwcmUyHiHamspkfg==" crossorigin="anonymous"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
   :root{--bg0:#0a0e14;--bg1:#111820;--bg2:#1a2230;--bgH:#1e2a3a;--bd:#1e2a3a;--bdA:#2a3a4e;--t1:#c8d6e5;--t2:#6b7d93;--t3:#3d5068;--blue:#3b82f6;--cyan:#22d3ee;--green:#10b981;--amber:#f59e0b;--red:#ef4444;--purple:#8b5cf6;--mono:'JetBrains Mono',monospace;--sans:'Space Grotesk',sans-serif}
@@ -73,6 +74,9 @@
 <div class="header"><div class="header-left"><div class="logo">UB</div><div><h1>UniFi Backup Explorer <span style="font-size:11px;color:var(--cyan);font-family:var(--mono)">v2</span></h1><div class="header-subtitle">Client-Side Decryptor · v10.x Aware</div></div></div><div class="file-info" id="fileInfo"></div></div>
 <div id="app"></div>
 <script>
+// HTML escape — prevents XSS when inserting untrusted strings into innerHTML
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+
 // BSON Decoder
 class BSON{
   constructor(buf){this.v=new DataView(buf);this.b=new Uint8Array(buf);this.o=0;this.l=buf.byteLength}
@@ -81,7 +85,7 @@ class BSON{
   f64(){const v=this.v.getFloat64(this.o,!0);this.o+=8;return v}
   u8(){return this.b[this.o++]}
   cstr(){let s='';while(this.o<this.l){const c=this.b[this.o++];if(!c)break;s+=String.fromCharCode(c)}return s}
-  str(){const n=this.i32();const s=new TextDecoder().decode(this.b.slice(this.o,this.o+n-1));this.o+=n;return s}
+  str(){const n=this.i32();if(n<1||this.o+n>this.l)throw new Error('BSON string length out of bounds');const s=new TextDecoder().decode(this.b.slice(this.o,this.o+n-1));this.o+=n;return s}
   oid(){const h=Array.from(this.b.slice(this.o,this.o+12)).map(x=>x.toString(16).padStart(2,'0')).join('');this.o+=12;return h}
   bin(){const n=this.i32();const t=this.u8();this.o+=n;return`<bin:${t} ${n}B>`}
   doc(){const sz=this.i32(),end=this.o-4+sz,d={};while(this.o<end-1){const t=this.u8();if(!t)break;const k=this.cstr();d[k]=this.val(t)}this.o=end;return d}
@@ -90,13 +94,16 @@ class BSON{
   static all(buf){const d=new BSON(buf),docs=[];let e=0;while(d.o<d.l-4){try{if(d.l-d.o<5)break;const sz=d.v.getInt32(d.o,!0);if(sz<5||sz>d.l-d.o)break;docs.push(d.doc())}catch(x){e++;if(e>10)break;d.o++}}return docs}
 }
 
-// Decryption
+// Publicly documented UniFi Network Application backup encryption constants.
+// These are NOT secrets — Ubiquiti uses a fixed AES-128-CBC key/IV for all
+// Network Application backups. They are widely known and documented in the
+// UniFi community (key="bcyangkmluhomars", iv="ubntenterpriseap").
 const KEY='626379616e676b6d6c756f686d617273',IV='75626e74656e74657270726973656170';
 function hex2b(h){const b=new Uint8Array(h.length/2);for(let i=0;i<h.length;i+=2)b[i/2]=parseInt(h.substr(i,2),16);return b}
 
 async function decrypt(ab){
   const key=hex2b(KEY),iv=hex2b(IV),BS=16;
-  const ck=await crypto.subtle.importKey('raw',key,{name:'AES-CBC'},!1,['decrypt','encrypt']);
+  const ck=await crypto.subtle.importKey('raw',key,{name:'AES-CBC'},!1,['decrypt']);
   const aLen=Math.floor(ab.byteLength/BS)*BS;
   if(!aLen)throw new Error('File too small');
   const data=new Uint8Array(ab.slice(0,aLen));
@@ -105,15 +112,16 @@ async function decrypt(ab){
   // Try PKCS7 first
   try{const r=await crypto.subtle.decrypt({name:'AES-CBC',iv},ck,data);log('ok','Decrypted (PKCS7)');return r}catch(e){log('warn',`PKCS7: ${e.message}`)}
 
-  // NoPadding workaround: append encrypted padding block
+  // NoPadding workaround: append encrypted padding block (needs encrypt permission)
   try{
     log('info','Trying NoPadding workaround...');
+    const ek=await crypto.subtle.importKey('raw',key,{name:'AES-CBC'},!1,['encrypt','decrypt']);
     const lastBlock=data.slice(aLen-BS);
     const padPlain=new Uint8Array(BS);padPlain.fill(BS);
-    const encPad=await crypto.subtle.encrypt({name:'AES-CBC',iv:lastBlock},ck,padPlain);
+    const encPad=await crypto.subtle.encrypt({name:'AES-CBC',iv:lastBlock},ek,padPlain);
     const full=new Uint8Array(aLen+BS);
     full.set(data);full.set(new Uint8Array(encPad).slice(0,BS),aLen);
-    const r=await crypto.subtle.decrypt({name:'AES-CBC',iv},ck,full);
+    const r=await crypto.subtle.decrypt({name:'AES-CBC',iv},ek,full);
     log('ok','Decrypted (NoPadding workaround)');
     return r;
   }catch(e){throw new Error(`Decryption failed: ${e.message}`)}
@@ -148,34 +156,52 @@ const CM={
 };
 function gm(n){const m=CM[n];return m?{label:m.l,color:m.c,group:m.g}:{label:n,color:'#6b7d93',group:'Other'}}
 
+// Collections known to contain credentials (WiFi passwords, RADIUS secrets, VPN keys, etc.)
+const SENSITIVE_COLLS=new Set(['wlanconf','wireguard','vpnclient','account','setting']);
+
 // Debug log
 let logs=[];
-function log(t,m){logs.push({t,m});console.log(`[${t}] ${m}`);const el=document.getElementById('debugLog');if(el){el.innerHTML=logs.map(l=>`<div class="log-${l.t}">[${l.t.toUpperCase()}] ${l.m}</div>`).join('');el.scrollTop=el.scrollHeight}}
+function log(t,m){logs.push({t,m});console.log(`[${t}] ${m}`);const el=document.getElementById('debugLog');if(el){el.innerHTML=logs.map(l=>`<div class="log-${l.t}">[${l.t.toUpperCase()}] ${esc(l.m)}</div>`).join('');el.scrollTop=el.scrollHeight}}
 
 // JSON formatter
 function fj(o,i=0){const p='  '.repeat(i),p1='  '.repeat(i+1);if(o===null)return'<span class="json-null">null</span>';if(o===undefined)return'<span class="json-null">undefined</span>';if(typeof o==='boolean')return`<span class="json-bool">${o}</span>`;if(typeof o==='number')return`<span class="json-number">${o}</span>`;if(typeof o==='string'){const e=o.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');return`<span class="json-string">"${e.length>200?e.slice(0,200)+'…':e}"</span>`}if(Array.isArray(o)){if(!o.length)return'<span class="json-bracket">[]</span>';if(o.length<=3&&o.every(v=>typeof v!=='object'||v===null))return`<span class="json-bracket">[</span>${o.map(v=>fj(v,0)).join(', ')}<span class="json-bracket">]</span>`;return`<span class="json-bracket">[</span>\n${o.map(v=>`${p1}${fj(v,i+1)}`).join(',\n')}\n${p}<span class="json-bracket">]</span>`}if(typeof o==='object'){const k=Object.keys(o);if(!k.length)return'<span class="json-bracket">{}</span>';if(k.length===1&&k[0]==='$oid')return`<span class="json-string">"${o.$oid}"</span>`;if(k.length===1&&k[0]==='$date')return`<span class="json-number">${o.$date}</span>`;return`<span class="json-bracket">{</span>\n${k.map(key=>`${p1}<span class="json-key">"${key.replace(/&/g,'&amp;').replace(/</g,'&lt;')}"</span>: ${fj(o[key],i+1)}`).join(',\n')}\n${p}<span class="json-bracket">}</span>`}return String(o)}
-function dl(d,i){return d.name||d.key||d.hostname||d.mac||d.purpose||d.essid||(d._id?(typeof d._id==='object'?d._id.$oid:String(d._id)).substring(0,12)+'…':null)||`Doc ${i+1}`}
-function dm(d){const p=[];if(d.enabled!==undefined)p.push(d.enabled?'✓ on':'✗ off');if(d.vlan)p.push(`VLAN ${d.vlan}`);if(d.subnet)p.push(d.subnet);if(d.type)p.push(d.type);if(d.model)p.push(d.model);if(d.action)p.push(d.action);return p.join(' · ')}
+function dl(d,i){return esc(d.name||d.key||d.hostname||d.mac||d.purpose||d.essid||(d._id?(typeof d._id==='object'?d._id.$oid:String(d._id)).substring(0,12)+'…':null)||`Doc ${i+1}`)}
+function dm(d){const p=[];if(d.enabled!==undefined)p.push(d.enabled?'✓ on':'✗ off');if(d.vlan)p.push(`VLAN ${esc(d.vlan)}`);if(d.subnet)p.push(esc(d.subnet));if(d.type)p.push(esc(d.type));if(d.model)p.push(esc(d.model));if(d.action)p.push(esc(d.action));return p.join(' · ')}
 
 // State
 let S={phase:'drop',step:'',fn:'',fs:0,colls:{},act:null,sf:'',df:'',exp:new Set(),vm:'cards'};
 function set(u){Object.assign(S,u);render()}
 function render(){
   const app=document.getElementById('app'),fi=document.getElementById('fileInfo');
+  // Save focus state before DOM rebuild
+  const ae=document.activeElement;
+  let focusId=null,selStart=null,selEnd=null;
+  if(ae&&ae.tagName==='INPUT'){
+    if(ae.classList.contains('search-box'))focusId='search-box';
+    else if(ae.closest&&ae.closest('.content-filter'))focusId='content-filter';
+    selStart=ae.selectionStart;selEnd=ae.selectionEnd;
+  }
   if(S.phase==='drop'){fi.innerHTML='';app.innerHTML=rDrop();sDrop()}
-  else if(S.phase==='processing'){fi.innerHTML=`<span class="badge">${S.fn}</span>`;app.innerHTML=rProc()}
-  else if(S.phase==='ready'){fi.innerHTML=`<span class="badge green">✓ Decrypted</span><span class="badge">${S.fn}</span><span class="badge">${fSz(S.fs)}</span><button class="reset-btn" onclick="reset()">✕</button>`;app.innerHTML=rMain()}
+  else if(S.phase==='processing'){fi.innerHTML=`<span class="badge">${esc(S.fn)}</span>`;app.innerHTML=rProc()}
+  else if(S.phase==='ready'){fi.innerHTML=`<span class="badge green">✓ Decrypted</span><span class="badge">${esc(S.fn)}</span><span class="badge">${fSz(S.fs)}</span><button class="reset-btn" data-action="reset">✕</button>`;app.innerHTML=rMain()}
+  // Restore focus after DOM rebuild
+  if(focusId){
+    let target;
+    if(focusId==='search-box')target=app.querySelector('.search-box');
+    else if(focusId==='content-filter')target=app.querySelector('.content-filter input');
+    if(target){target.focus();if(selStart!==null){try{target.selectionStart=selStart;target.selectionEnd=selEnd}catch(e){}}}
+  }
 }
 function rDrop(){return`<div class="drop-zone-container"><div class="drop-zone" id="dz"><div class="drop-icon">📦</div><h2>Drop UniFi Backup</h2><p>Drag & drop a .unf Network backup file</p><p>or click to browse</p><div class="hint">AES-128-CBC · Client-side · Nothing leaves your machine</div><div class="hint" style="margin-top:8px;color:var(--amber)">⚠ Network Application backup (.unf) only — not UniFi OS System backup</div><input type="file" id="fi" accept=".unf"></div></div>`}
-function rProc(){return`<div class="processing"><div class="spinner"></div><div class="processing-text">Processing backup…</div><div class="processing-step">${S.step}</div><div class="debug-log" id="debugLog">${logs.map(l=>`<div class="log-${l.t}">[${l.t.toUpperCase()}] ${l.m}</div>`).join('')}</div><button class="back-btn" onclick="reset()">← Back</button></div>`}
+function rProc(){return`<div class="processing"><div class="spinner"></div><div class="processing-text">Processing backup…</div><div class="processing-step">${esc(S.step)}</div><div class="debug-log" id="debugLog">${logs.map(l=>`<div class="log-${l.t}">[${l.t.toUpperCase()}] ${esc(l.m)}</div>`).join('')}</div><button class="back-btn" data-action="reset">← Back</button></div>`}
 function rMain(){
   const c=gf(),gr={};for(const[n,d]of Object.entries(c)){const m=gm(n);if(!gr[m.group])gr[m.group]=[];gr[m.group].push({n,d,m})}
   const ord=['Security','Network','Auth','Devices','System','Other'],sg=ord.filter(g=>gr[g]).map(g=>[g,gr[g]]);
   const td=Object.values(S.colls).reduce((s,d)=>s+d.length,0);
-  return`<div class="main-layout"><div class="sidebar"><div class="sidebar-header"><input class="search-box" placeholder="Filter…" value="${S.sf}" oninput="uSF(this.value)"></div><div class="sidebar-stats"><div class="stat"><span class="stat-label">Collections</span><span class="stat-value">${Object.keys(S.colls).length}</span></div><div class="stat"><span class="stat-label">Documents</span><span class="stat-value">${td.toLocaleString()}</span></div></div><div class="collection-list"><div class="collection-item ${!S.act?'active':''}" onclick="sA(null)"><div class="left"><span class="dot" style="background:var(--cyan)"></span><span class="name">Overview</span></div></div>${sg.map(([g,items])=>`<div class="collection-group-label">${g}</div>${items.map(it=>`<div class="collection-item ${S.act===it.n?'active':''}" onclick="sA('${it.n}')"><div class="left"><span class="dot" style="background:${it.m.color}"></span><span class="name">${it.n}</span></div><span class="count">${it.d.length}</span></div>`).join('')}`).join('')}</div></div><div class="content">${S.act?rColl():rOV()}</div></div>`}
-function rOV(){const gr={};for(const[n,d]of Object.entries(S.colls)){const m=gm(n);if(!gr[m.group])gr[m.group]=[];gr[m.group].push({n,d,m})}const ord=['Security','Network','Auth','Devices','System','Other'];return`<div class="content-header"><div class="content-title">Backup Overview</div><div class="content-actions"><button class="btn primary" onclick="eAll()">⬇ Export All</button></div></div><div class="summary-grid">${ord.filter(g=>gr[g]).map(g=>gr[g].map(it=>`<div class="summary-card" onclick="sA('${it.n}')"><h3 style="color:${it.m.color}">${it.n}</h3><div class="desc">${it.m.label}</div><div class="doc-count">${it.d.length}</div><div class="doc-label">documents</div></div>`).join('')).join('')}</div>`}
-function rColl(){const n=S.act,m=gm(n);let d=S.colls[n]||[];if(S.df){const f=S.df.toLowerCase();d=d.filter(x=>JSON.stringify(x).toLowerCase().includes(f))}return`<div class="content-header"><div class="content-title" style="color:${m.color}">${m.label}<span>${d.length} docs</span></div><div class="content-actions"><div class="view-tabs"><button class="view-tab ${S.vm==='cards'?'active':''}" onclick="sVM('cards')">Cards</button><button class="view-tab ${S.vm==='raw'?'active':''}" onclick="sVM('raw')">Raw</button></div><button class="btn" onclick="eC('${n}')">⬇</button></div></div><div class="content-filter"><input placeholder="Search ${n}…" value="${S.df}" oninput="uDF(this.value)"></div>${S.vm==='cards'?rCards(d,n):rRaw(d)}`}
-function rCards(docs,cn){if(!docs.length)return`<div class="empty-state"><div class="empty-state-icon">🔍</div><p>No matches</p></div>`;const mx=200,lim=docs.length>mx,rd=lim?docs.slice(0,mx):docs;return`<div class="doc-list">${rd.map((d,i)=>{const x=S.exp.has(`${cn}-${i}`);return`<div class="doc-card ${x?'expanded':''}"><div class="doc-card-header" onclick="tD('${cn}-${i}')"><div><div class="doc-card-id">${dl(d,i)}</div>${dm(d)?`<div class="doc-card-meta">${dm(d)}</div>`:''}</div><span class="doc-card-toggle">▶</span></div><div class="doc-card-body"><div class="json-tree">${x?fj(d):''}</div></div></div>`}).join('')}${lim?`<div style="padding:20px;text-align:center;color:var(--t3)">Showing ${mx}/${docs.length}</div>`:''}</div>`}
+  return`<div class="main-layout"><div class="sidebar"><div class="sidebar-header"><input class="search-box" placeholder="Filter…" value="${esc(S.sf)}"></div><div class="sidebar-stats"><div class="stat"><span class="stat-label">Collections</span><span class="stat-value">${Object.keys(S.colls).length}</span></div><div class="stat"><span class="stat-label">Documents</span><span class="stat-value">${td.toLocaleString()}</span></div></div><div class="collection-list"><div class="collection-item ${!S.act?'active':''}" data-action="select"><div class="left"><span class="dot" style="background:var(--cyan)"></span><span class="name">Overview</span></div></div>${sg.map(([g,items])=>`<div class="collection-group-label">${esc(g)}</div>${items.map(it=>`<div class="collection-item ${S.act===it.n?'active':''}" data-action="select" data-value="${esc(it.n)}"><div class="left"><span class="dot" style="background:${it.m.color}"></span><span class="name">${esc(it.n)}</span></div><span class="count">${it.d.length}</span></div>`).join('')}`).join('')}</div></div><div class="content">${S.act?rColl():rOV()}</div></div>`}
+function rOV(){const gr={};for(const[n,d]of Object.entries(S.colls)){const m=gm(n);if(!gr[m.group])gr[m.group]=[];gr[m.group].push({n,d,m})}const ord=['Security','Network','Auth','Devices','System','Other'];return`<div class="content-header"><div class="content-title">Backup Overview</div><div class="content-actions"><button class="btn primary" data-action="export-all">⬇ Export All</button></div></div><div class="summary-grid">${ord.filter(g=>gr[g]).map(g=>gr[g].map(it=>`<div class="summary-card" data-action="select" data-value="${esc(it.n)}"><h3 style="color:${it.m.color}">${esc(it.n)}</h3><div class="desc">${esc(it.m.label)}</div><div class="doc-count">${it.d.length}</div><div class="doc-label">documents</div></div>`).join('')).join('')}</div>`}
+function rColl(){const n=S.act,m=gm(n);let d=S.colls[n]||[];if(S.df){const f=S.df.toLowerCase();d=d.filter(x=>JSON.stringify(x).toLowerCase().includes(f))}return`<div class="content-header"><div class="content-title" style="color:${m.color}">${esc(m.label)}<span>${d.length} docs</span></div><div class="content-actions"><div class="view-tabs"><button class="view-tab ${S.vm==='cards'?'active':''}" data-action="view-mode" data-value="cards">Cards</button><button class="view-tab ${S.vm==='raw'?'active':''}" data-action="view-mode" data-value="raw">Raw</button></div><button class="btn" data-action="export" data-value="${esc(n)}">⬇</button></div></div><div class="content-filter"><input placeholder="Search ${esc(n)}…" value="${esc(S.df)}"></div>${S.vm==='cards'?rCards(d,n):rRaw(d)}`}
+function rCards(docs,cn){if(!docs.length)return`<div class="empty-state"><div class="empty-state-icon">🔍</div><p>No matches</p></div>`;const mx=200,lim=docs.length>mx,rd=lim?docs.slice(0,mx):docs;return`<div class="doc-list">${rd.map((d,i)=>{const x=S.exp.has(`${cn}-${i}`);return`<div class="doc-card ${x?'expanded':''}"><div class="doc-card-header" data-action="toggle" data-value="${esc(cn)}-${i}"><div><div class="doc-card-id">${dl(d,i)}</div>${dm(d)?`<div class="doc-card-meta">${dm(d)}</div>`:''}</div><span class="doc-card-toggle">▶</span></div><div class="doc-card-body"><div class="json-tree">${x?fj(d):''}</div></div></div>`}).join('')}${lim?`<div style="padding:20px;text-align:center;color:var(--t3)">Showing ${mx}/${docs.length}</div>`:''}</div>`}
 function rRaw(d){const j=JSON.stringify(d,null,2);return`<pre class="raw-json">${(j.length>500000?j.slice(0,500000)+'\n…':j).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre>`}
 
 // Interactions
@@ -187,9 +213,36 @@ function reset(){logs=[];S={phase:'drop',step:'',fn:'',fs:0,colls:{},act:null,sf
 function gf(){if(!S.sf)return S.colls;const f=S.sf.toLowerCase(),r={};for(const[n,d]of Object.entries(S.colls)){const m=gm(n);if(n.toLowerCase().includes(f)||m.label.toLowerCase().includes(f))r[n]=d}return r}
 function fSz(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';return(b/1048576).toFixed(1)+' MB'}
 function toast(m,t='success'){const x=document.querySelector('.toast');if(x)x.remove();const e=document.createElement('div');e.className=`toast ${t}`;e.textContent=m;document.body.appendChild(e);setTimeout(()=>e.remove(),6000)}
-function eC(n){const j=JSON.stringify(S.colls[n],null,2);dlf(`${n}.json`,j,'application/json');toast(`Exported ${n}.json`)}
-function eAll(){const z=new JSZip();for(const[n,d]of Object.entries(S.colls))z.file(`${n}.json`,JSON.stringify(d,null,2));z.generateAsync({type:'blob'}).then(b=>{const u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=S.fn.replace('.unf','')+'_export.zip';a.click();URL.revokeObjectURL(u);toast('Exported all as ZIP')})}
-function dlf(name,content,type){const b=new Blob([content],{type}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=name;a.click();URL.revokeObjectURL(u)}
+function eC(n){
+  if(SENSITIVE_COLLS.has(n)&&!confirm(`"${n}" may contain credentials (passwords, keys, secrets).\nThe export will include them in cleartext.\n\nContinue?`))return;
+  const j=JSON.stringify(S.colls[n],null,2);dlf(`${n}.json`,j,'application/json');toast(`Exported ${n}.json`);
+}
+function eAll(){
+  const sensitive=Object.keys(S.colls).filter(n=>SENSITIVE_COLLS.has(n));
+  if(sensitive.length&&!confirm('This export includes collections that may contain credentials (passwords, keys, secrets) in cleartext.\n\nCollections: '+sensitive.join(', ')+'\n\nContinue?'))return;
+  const z=new JSZip();for(const[n,d]of Object.entries(S.colls))z.file(`${n}.json`,JSON.stringify(d,null,2));
+  z.generateAsync({type:'blob'}).then(b=>{const u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=S.fn.replace('.unf','')+'_export.zip';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);toast('Exported all as ZIP')}).catch(e=>{toast('Export failed: '+e.message,'error')});
+}
+function dlf(name,content,type){const b=new Blob([content],{type}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
+
+// Event delegation — replaces inline onclick/oninput handlers to prevent injection
+document.getElementById('app').addEventListener('click',function(e){
+  const el=e.target.closest('[data-action]');if(!el)return;
+  const a=el.dataset.action,v=el.dataset.value;
+  if(a==='select')sA(v||null);
+  else if(a==='export')eC(v);
+  else if(a==='export-all')eAll();
+  else if(a==='toggle')tD(v);
+  else if(a==='view-mode')sVM(v);
+  else if(a==='reset')reset();
+});
+document.getElementById('app').addEventListener('input',function(e){
+  if(e.target.classList.contains('search-box'))uSF(e.target.value);
+  else if(e.target.closest('.content-filter'))uDF(e.target.value);
+});
+document.getElementById('fileInfo').addEventListener('click',function(e){
+  if(e.target.closest('[data-action="reset"]'))reset();
+});
 
 // Firewall rule type strings used in UniFi v10.x zone-based policy engine
 const FW_RULE_TYPES = new Set(['ZONED_IN','ZONED_WAN_BLOCK','ZONED_WAN_ALLOW','ZONED_IN_ALLOW','ZONED_IN_BLOCK','ZONED_IN_FILTER','ZONED_WAN_PORT_FORWARD','CUSTOM_IN_BLOCK','CUSTOM_IN_ALLOW','CUSTOM_LOCAL_ALLOW','LOCAL_CUSTOM_ALLOW','FIREWALL_POLICY','WAN_IN','WAN_IN_ALLOW','WAN_IN_BLOCK','WAN_LOCAL_ALLOW','WAN_LOCAL_BLOCK','WAN_LOCAL_VPN','WAN_LOCAL_WAN','WAN_WAN_LOCAL','WAN_WAN_IN','WAN_PORT_FORWARD','LAN_IN_ALLOW','LAN_IN_BLOCK','LAN_LOCAL_ALLOW','LOCAL_LAN_ALLOW','GUEST_IN_BLOCK','GUEST_IN_ALLOW','GUEST_LOCAL_BLOCK','GUEST_LOCAL_ALLOW','LOCAL_GUEST_ALLOW','DMZ_IN_BLOCK','DMZ_IN_ALLOW','DMZ_LOCAL_ALLOW','DMZ_LOCAL_BLOCK','LOCAL_DMZ_ALLOW','VPN_IN_ALLOW','VPN_IN_BLOCK','VPN_LOCAL_ALLOW','LOCAL_VPN_ALLOW','VPN_ZONED_PORT_FORWARD','ACCOUNTING_PORT_FORWARD','NAT_WAN_MASQUERADE','FORWARD_IN','LOCAL_WAN_ALLOW']);
@@ -278,7 +331,7 @@ function cat(d){
   if(d.job!==undefined||(d.schedule!==undefined&&d.action!==undefined))return'scheduletask';
 
   // VPN / WireGuard / Teleport
-  if(d.wg_public_key!==undefined||d.wg_private_key!==undefined||d.public_key!==undefined&&d.allowed_ips!==undefined)return'wireguard';
+  if(d.wg_public_key!==undefined||d.wg_private_key!==undefined||(d.public_key!==undefined&&d.allowed_ips!==undefined))return'wireguard';
   if(d.teleport!==undefined||d.attr_hidden_id==='teleport')return'teleport';
   if(d.vpn_type!==undefined||d.l2tp_interface!==undefined)return'vpnclient';
 
