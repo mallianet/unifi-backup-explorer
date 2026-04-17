@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data:; connect-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data:; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'">
 <title>UniFi Backup Explorer v2.1</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg==" crossorigin="anonymous"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js" integrity="sha512-g2TeAWw5GPnX7z0Kn8nFbYfeHcvAu/tx6d6mrLe/90mkCxO+RcptyYpksUz35EO337F83bZwcmUyHiHamspkfg==" crossorigin="anonymous"></script>
@@ -75,11 +75,11 @@
 <div id="app"></div>
 <script>
 // HTML escape — prevents XSS when inserting untrusted strings into innerHTML
-function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 
 // BSON Decoder
 class BSON{
-  constructor(buf){this.v=new DataView(buf);this.b=new Uint8Array(buf);this.o=0;this.l=buf.byteLength}
+  constructor(buf){this.v=new DataView(buf);this.b=new Uint8Array(buf);this.o=0;this.l=buf.byteLength;this.d=0}
   i32(){const v=this.v.getInt32(this.o,!0);this.o+=4;return v}
   i64(){const l=this.v.getUint32(this.o,!0),h=this.v.getInt32(this.o+4,!0);this.o+=8;return h*0x100000000+l}
   f64(){const v=this.v.getFloat64(this.o,!0);this.o+=8;return v}
@@ -87,10 +87,10 @@ class BSON{
   cstr(){let s='';while(this.o<this.l){const c=this.b[this.o++];if(!c)break;s+=String.fromCharCode(c)}return s}
   str(){const n=this.i32();if(n<1||this.o+n>this.l)throw new Error('BSON string length out of bounds');const s=new TextDecoder().decode(this.b.slice(this.o,this.o+n-1));this.o+=n;return s}
   oid(){const h=Array.from(this.b.slice(this.o,this.o+12)).map(x=>x.toString(16).padStart(2,'0')).join('');this.o+=12;return h}
-  bin(){const n=this.i32();const t=this.u8();this.o+=n;return`<bin:${t} ${n}B>`}
-  doc(){const sz=this.i32(),end=this.o-4+sz,d={};while(this.o<end-1){const t=this.u8();if(!t)break;const k=this.cstr();d[k]=this.val(t)}this.o=end;return d}
-  arr(){const sz=this.i32(),end=this.o-4+sz,a=[];while(this.o<end-1){const t=this.u8();if(!t)break;this.cstr();a.push(this.val(t))}this.o=end;return a}
-  val(t){switch(t){case 1:return this.f64();case 2:return this.str();case 3:return this.doc();case 4:return this.arr();case 5:return this.bin();case 6:return undefined;case 7:return{$oid:this.oid()};case 8:return this.u8()!==0;case 9:return{$date:new Date(this.i64()).toISOString()};case 10:return null;case 11:{const p=this.cstr(),f=this.cstr();return{$regex:p,$options:f}};case 13:return this.str();case 16:return this.i32();case 17:case 18:return this.i64();case 255:return{$minKey:1};case 127:return{$maxKey:1};default:throw new Error(`BSON type 0x${t.toString(16)} @${this.o}`)}}
+  bin(){const n=this.i32();const t=this.u8();if(n<0||this.o+n>this.l)throw new Error('BSON binary length out of bounds');this.o+=n;return`<bin:${t} ${n}B>`}
+  doc(){if(++this.d>20){this.d--;throw new Error('BSON nesting too deep')}try{const sz=this.i32(),end=this.o-4+sz,d={};while(this.o<end-1){const t=this.u8();if(!t)break;const k=this.cstr();const v=this.val(t);if(k==='__proto__'||k==='constructor'||k==='prototype')continue;d[k]=v}this.o=end;return d}finally{this.d--}}
+  arr(){if(++this.d>20){this.d--;throw new Error('BSON nesting too deep')}try{const sz=this.i32(),end=this.o-4+sz,a=[];while(this.o<end-1){const t=this.u8();if(!t)break;this.cstr();a.push(this.val(t))}this.o=end;return a}finally{this.d--}}
+  val(t){switch(t){case 1:return this.f64();case 2:return this.str();case 3:return this.doc();case 4:return this.arr();case 5:return this.bin();case 6:return undefined;case 7:return{$oid:this.oid()};case 8:return this.u8()!==0;case 9:{const ms=this.i64();try{return{$date:new Date(ms).toISOString()}}catch(e){return{$date:'invalid',$dateMs:ms}}};case 10:return null;case 11:{const p=this.cstr(),f=this.cstr();return{$regex:p,$options:f}};case 13:return this.str();case 16:return this.i32();case 17:case 18:return this.i64();case 255:return{$minKey:1};case 127:return{$maxKey:1};default:throw new Error(`BSON type 0x${t.toString(16)} @${this.o}`)}}
   static all(buf){const d=new BSON(buf),docs=[];let e=0;while(d.o<d.l-4){try{if(d.l-d.o<5)break;const sz=d.v.getInt32(d.o,!0);if(sz<5||sz>d.l-d.o)break;docs.push(d.doc())}catch(x){e++;if(e>10)break;d.o++}}return docs}
 }
 
@@ -157,14 +157,14 @@ const CM={
 function gm(n){const m=CM[n];return m?{label:m.l,color:m.c,group:m.g}:{label:n,color:'#6b7d93',group:'Other'}}
 
 // Collections known to contain credentials (WiFi passwords, RADIUS secrets, VPN keys, etc.)
-const SENSITIVE_COLLS=new Set(['wlanconf','wireguard','vpnclient','account','setting']);
+const SENSITIVE_COLLS=new Set(['wlanconf','wireguard','vpnclient','account','setting','radiusprofile','device','user']);
 
 // Debug log
 let logs=[];
 function log(t,m){logs.push({t,m});console.log(`[${t}] ${m}`);const el=document.getElementById('debugLog');if(el){el.innerHTML=logs.map(l=>`<div class="log-${l.t}">[${l.t.toUpperCase()}] ${esc(l.m)}</div>`).join('');el.scrollTop=el.scrollHeight}}
 
 // JSON formatter
-function fj(o,i=0){const p='  '.repeat(i),p1='  '.repeat(i+1);if(o===null)return'<span class="json-null">null</span>';if(o===undefined)return'<span class="json-null">undefined</span>';if(typeof o==='boolean')return`<span class="json-bool">${o}</span>`;if(typeof o==='number')return`<span class="json-number">${o}</span>`;if(typeof o==='string'){const e=o.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');return`<span class="json-string">"${e.length>200?e.slice(0,200)+'…':e}"</span>`}if(Array.isArray(o)){if(!o.length)return'<span class="json-bracket">[]</span>';if(o.length<=3&&o.every(v=>typeof v!=='object'||v===null))return`<span class="json-bracket">[</span>${o.map(v=>fj(v,0)).join(', ')}<span class="json-bracket">]</span>`;return`<span class="json-bracket">[</span>\n${o.map(v=>`${p1}${fj(v,i+1)}`).join(',\n')}\n${p}<span class="json-bracket">]</span>`}if(typeof o==='object'){const k=Object.keys(o);if(!k.length)return'<span class="json-bracket">{}</span>';if(k.length===1&&k[0]==='$oid')return`<span class="json-string">"${o.$oid}"</span>`;if(k.length===1&&k[0]==='$date')return`<span class="json-number">${o.$date}</span>`;return`<span class="json-bracket">{</span>\n${k.map(key=>`${p1}<span class="json-key">"${key.replace(/&/g,'&amp;').replace(/</g,'&lt;')}"</span>: ${fj(o[key],i+1)}`).join(',\n')}\n${p}<span class="json-bracket">}</span>`}return String(o)}
+function fj(o,i=0){const p='  '.repeat(i),p1='  '.repeat(i+1);if(o===null)return'<span class="json-null">null</span>';if(o===undefined)return'<span class="json-null">undefined</span>';if(typeof o==='boolean')return`<span class="json-bool">${o}</span>`;if(typeof o==='number')return`<span class="json-number">${o}</span>`;if(typeof o==='string'){const e=o.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');return`<span class="json-string">"${e.length>200?e.slice(0,200)+'…':e}"</span>`}if(Array.isArray(o)){if(!o.length)return'<span class="json-bracket">[]</span>';if(o.length<=3&&o.every(v=>typeof v!=='object'||v===null))return`<span class="json-bracket">[</span>${o.map(v=>fj(v,0)).join(', ')}<span class="json-bracket">]</span>`;return`<span class="json-bracket">[</span>\n${o.map(v=>`${p1}${fj(v,i+1)}`).join(',\n')}\n${p}<span class="json-bracket">]</span>`}if(typeof o==='object'){const k=Object.keys(o);if(!k.length)return'<span class="json-bracket">{}</span>';if(k.length===1&&k[0]==='$oid')return`<span class="json-string">"${esc(o.$oid)}"</span>`;if(k.length===1&&k[0]==='$date')return`<span class="json-number">${esc(o.$date)}</span>`;return`<span class="json-bracket">{</span>\n${k.map(key=>`${p1}<span class="json-key">"${key.replace(/&/g,'&amp;').replace(/</g,'&lt;')}"</span>: ${fj(o[key],i+1)}`).join(',\n')}\n${p}<span class="json-bracket">}</span>`}return String(o)}
 function dl(d,i){return esc(d.name||d.key||d.hostname||d.mac||d.purpose||d.essid||(d._id?(typeof d._id==='object'?d._id.$oid:String(d._id)).substring(0,12)+'…':null)||`Doc ${i+1}`)}
 function dm(d){const p=[];if(d.enabled!==undefined)p.push(d.enabled?'✓ on':'✗ off');if(d.vlan)p.push(`VLAN ${esc(d.vlan)}`);if(d.subnet)p.push(esc(d.subnet));if(d.type)p.push(esc(d.type));if(d.model)p.push(esc(d.model));if(d.action)p.push(esc(d.action));return p.join(' · ')}
 
