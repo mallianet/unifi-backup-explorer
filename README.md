@@ -12,7 +12,7 @@ This tool does everything in the browser. Drag the `.unf` file onto the page, re
 
 ## Features
 
-- **Single-file HTML** — no installation, no dependencies to install locally
+- **Single-file HTML** — no installation, no local package managers, no terminal. Loads JSZip and pako from cdnjs at runtime (locked with SRI hashes).
 - **Fully client-side** — decryption happens in your browser via the Web Crypto API
 - **16 categorised collections** — firewall groups, rules, zones, traffic routes, networks/VLANs, WireGuard peers, WiFi SSIDs, devices, users, user groups, privileges, scheduled tasks, schema, settings, tombstones, uncategorised
 - **Grouped navigation** — Security / Network / Devices / System / Other
@@ -31,7 +31,7 @@ This tool does everything in the browser. Drag the `.unf` file onto the page, re
 
 - Decryption runs entirely in the browser using the Web Crypto API
 - Read-only — the tool never writes back to the backup file
-- No network requests are made during decryption or parsing
+- No network requests are made after page load — decryption, parsing, and rendering are all local
 - CDN dependencies locked with Subresource Integrity (SRI) hashes
 - Content Security Policy applied to limit attack surface
 - Nothing is stored, logged, or transmitted
