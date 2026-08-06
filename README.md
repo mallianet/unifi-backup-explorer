@@ -12,13 +12,16 @@ The hosted page is the same single `index.html` from this repository — nothing
 
 The existing tools for decrypting UniFi `.unf` backups are command-line only — they need OpenSSL, `mongo-tools`, `bsondump`, and a working bash environment just to look at what's in a backup. That's a high bar for anyone who just wants to audit their own network configuration.
 
+A backup is the most complete record of how a site is configured, but on UniFi it is an opaque encrypted blob. There is no equivalent of opening `config.xml` on pfSense or OPNsense, or diffing a Cisco `running-config` export. That gap is what this fills: producing a readable configuration report for an auditor, analysing a backup offline without restoring it, checking a single setting without a full restore, and comparing how two sites are configured.
+
 This tool does everything in the browser. Drag the `.unf` file onto the page, read your configuration.
 
 ## Features
 
+- **One-click audit report** — a print-ready summary of the whole site: networks and VLANs, firewall zones, user-defined firewall policies in evaluation order, WiFi SSIDs, WireGuard peers by name, and a device inventory with firmware versions. Print it or save it as a PDF from the browser's print dialog. Credentials are excluded by design, and the exclusion is verified by an automated leak check before the report opens.
 - **Single-file HTML** — no installation, no local package managers, no terminal. Loads JSZip and pako from cdnjs at runtime (locked with SRI hashes).
 - **Fully client-side** — decryption happens in your browser via the Web Crypto API
-- **16 categorised collections** — firewall groups, rules, zones, traffic routes, networks/VLANs, WireGuard peers, WiFi SSIDs, devices, users, user groups, privileges, scheduled tasks, schema, settings, tombstones, uncategorised
+- **17 categorised collections** — firewall groups, rules, policies, zones, traffic routes, networks/VLANs, WireGuard peers, WiFi SSIDs, devices, users, user groups, privileges, scheduled tasks, schema, settings, tombstones, uncategorised
 - **Grouped navigation** — Security / Network / Devices / System / Other
 - **Live filter** — search across collections and documents
 - **Credential-aware** — warns on export that JSON contains plaintext WiFi passphrases, WireGuard keys, PPPoE passwords, and RADIUS secrets
