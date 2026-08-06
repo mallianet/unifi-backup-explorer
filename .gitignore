@@ -1,0 +1,6 @@
+# UniFi backups — never commit these.
+# A .unf decrypts with a fixed, publicly documented key, so committing one
+# exposes WiFi passphrases, VPN keys, RADIUS and PPPoE credentials to anyone
+# who can read the repo.
+*.unf
+*.unifi
