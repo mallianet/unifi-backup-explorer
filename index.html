@@ -129,6 +129,7 @@ async function decrypt(ab){
 
 // Collection metadata
 const CM={
+  firewallpolicy:{l:'Firewall Policies',c:'#ef4444',g:'Security'},
   firewallrule:{l:'Firewall Rules',c:'#ef4444',g:'Security'},firewallgroup:{l:'Firewall Groups',c:'#ef4444',g:'Security'},
   firewallzone:{l:'Firewall Zones',c:'#ef4444',g:'Security'},zonematrix:{l:'Zone Matrix',c:'#ef4444',g:'Security'},
   trafficrule:{l:'Traffic Rules',c:'#f59e0b',g:'Security'},trafficroute:{l:'Traffic Routes',c:'#f59e0b',g:'Security'},
@@ -169,7 +170,7 @@ function dl(d,i){return esc(d.name||d.key||d.hostname||d.mac||d.purpose||d.essid
 function dm(d){const p=[];if(d.enabled!==undefined)p.push(d.enabled?'✓ on':'✗ off');if(d.vlan)p.push(`VLAN ${esc(d.vlan)}`);if(d.subnet)p.push(esc(d.subnet));if(d.type)p.push(esc(d.type));if(d.model)p.push(esc(d.model));if(d.action)p.push(esc(d.action));return p.join(' · ')}
 
 // State
-let S={phase:'drop',step:'',fn:'',fs:0,colls:{},act:null,sf:'',df:'',exp:new Set(),vm:'cards'};
+let S={phase:'drop',step:'',fn:'',fs:0,ver:'',colls:{},act:null,sf:'',df:'',exp:new Set(),vm:'cards'};
 function set(u){Object.assign(S,u);render()}
 function render(){
   const app=document.getElementById('app'),fi=document.getElementById('fileInfo');
@@ -183,7 +184,7 @@ function render(){
   }
   if(S.phase==='drop'){fi.innerHTML='';app.innerHTML=rDrop();sDrop()}
   else if(S.phase==='processing'){fi.innerHTML=`<span class="badge">${esc(S.fn)}</span>`;app.innerHTML=rProc()}
-  else if(S.phase==='ready'){fi.innerHTML=`<span class="badge green">✓ Decrypted</span><span class="badge">${esc(S.fn)}</span><span class="badge">${fSz(S.fs)}</span><button class="reset-btn" data-action="reset">✕</button>`;app.innerHTML=rMain()}
+  else if(S.phase==='ready'){fi.innerHTML=`<span class="badge green">✓ Decrypted</span><span class="badge">${esc(S.fn)}</span><span class="badge">${fSz(S.fs)}</span><button class="btn" data-action="audit">🖨 Export audit report</button><button class="reset-btn" data-action="reset">✕</button>`;app.innerHTML=rMain()}
   // Restore focus after DOM rebuild
   if(focusId){
     let target;
@@ -209,7 +210,7 @@ function sDrop(){const z=document.getElementById('dz'),f=document.getElementById
 function sA(n){S.act=n;S.df='';S.exp.clear();S.vm='cards';render()}
 function uSF(v){S.sf=v;render()}function uDF(v){S.df=v;S.exp.clear();render()}function sVM(m){S.vm=m;render()}
 function tD(id){S.exp.has(id)?S.exp.delete(id):S.exp.add(id);render()}
-function reset(){logs=[];S={phase:'drop',step:'',fn:'',fs:0,colls:{},act:null,sf:'',df:'',exp:new Set(),vm:'cards'};render()}
+function reset(){logs=[];S={phase:'drop',step:'',fn:'',fs:0,ver:'',colls:{},act:null,sf:'',df:'',exp:new Set(),vm:'cards'};render()}
 function gf(){if(!S.sf)return S.colls;const f=S.sf.toLowerCase(),r={};for(const[n,d]of Object.entries(S.colls)){const m=gm(n);if(n.toLowerCase().includes(f)||m.label.toLowerCase().includes(f))r[n]=d}return r}
 function fSz(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';return(b/1048576).toFixed(1)+' MB'}
 function toast(m,t='success'){const x=document.querySelector('.toast');if(x)x.remove();const e=document.createElement('div');e.className=`toast ${t}`;e.textContent=m;document.body.appendChild(e);setTimeout(()=>e.remove(),6000)}
@@ -224,6 +225,337 @@ function eAll(){
   z.generateAsync({type:'blob'}).then(b=>{const u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=S.fn.replace('.unf','')+'_export.zip';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);toast('Exported all as ZIP')}).catch(e=>{toast('Export failed: '+e.message,'error')});
 }
 function dlf(name,content,type){const b=new Blob([content],{type}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
+
+// ============================================================
+// AUDIT REPORT — print-friendly A4 view, credentials excluded
+// ============================================================
+// The report is built from the already-parsed S.colls collections. Every value
+// is picked field-by-field below; no document is ever serialised wholesale, so
+// secrets cannot leak through an unexpected field. For the record, these are
+// the fields the report must never read:
+//   x_passphrase, x_password, wpa_psk, x_wan_password, radius_secret,
+//   x_radius_secret, wg_private_key, wg_public_key, public_key, private_key,
+//   preshared_key, x_authkey, x_ssh_password, api_key, token
+// Matches secret-bearing field names. Deliberately does NOT match a bare `key`:
+// setting docs are keyed by `key` and zones carry `zone_key`, both non-secret —
+// collecting those would make the leak check abort on ordinary text.
+const AUDIT_FORBIDDEN=/passphrase|password|psk|secret|preshared|authkey|credential|token|(private|public|wep|iapp|wg|ssh|api|shared|identity|session)_?key/i;
+// Collections the report reads from — also the search space for the leak check.
+// `device` is included for the custom-zone slot map below; only zone names are
+// ever read from it, but listing it here keeps it inside the leak check.
+const AUDIT_SOURCES=['networkconf','firewallzone','firewallpolicy','firewallrule','wlanconf','wireguard','site','setting','device'];
+
+// Belt-and-braces: collect every value stored under a secret-looking field name
+// in the source collections, and confirm none of them made it into the output.
+// Values under 8 chars are skipped — shorter ones collide with ordinary report
+// text (a passphrase reused as an SSID prefix would abort every export), and 8
+// is the WPA-PSK minimum length, so real passphrases are still covered.
+function auditSecretValues(){
+  const out=new Set();
+  const walk=(v,key,depth)=>{
+    if(depth>8||v===null||v===undefined)return;
+    if(Array.isArray(v)){v.forEach(x=>walk(x,key,depth+1));return}
+    if(typeof v==='object'){for(const k of Object.keys(v))walk(v[k],k,depth+1);return}
+    if(key&&AUDIT_FORBIDDEN.test(key)){const s=String(v);if(s.length>=8)out.add(s)}
+  };
+  for(const c of AUDIT_SOURCES)for(const d of S.colls[c]||[])walk(d,null,0);
+  return out;
+}
+// The report is HTML-escaped, so a secret containing & < > " ' appears in the
+// output in escaped form. Test both encodings or the check silently passes on
+// exactly the passphrases most likely to contain punctuation.
+function auditLeakCheck(html){
+  const leaked=[];
+  for(const v of auditSecretValues())if(html.includes(v)||html.includes(esc(v)))leaked.push(v);
+  return leaked;
+}
+
+function aOid(v){return v&&typeof v==='object'?String(v.$oid||''):(v==null?'':String(v))}
+function aBool(v){return v===undefined||v===null?'—':(v?'Yes':'No')}
+function aStr(v){return v===undefined||v===null||v===''?'—':String(v)}
+function aCell(c){return c&&typeof c==='object'&&'html'in c?c.html:esc(c===undefined||c===null||c===''?'—':String(c))}
+function aTable(headers,rows,empty){
+  if(!rows.length)return`<p class="empty">${esc(empty)}</p>`;
+  return`<table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${aCell(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+// Text of a cell, for emptiness tests — strips the markup of {html:…} cells.
+function aText(c){return c&&typeof c==='object'&&'html'in c?c.html.replace(/<[^>]*>/g,''):String(c==null?'':c)}
+// Drop optional columns that carry no value for nearly every row. The compiled
+// ruleset records protocol/enabled/logging on only a handful of its entries, and
+// a column of dashes is worse than no column.
+function aPrune(headers,rows,optional,minFill){
+  const drop=new Set(),lim=minFill===undefined?0.1:minFill;
+  if(rows.length)for(const i of optional){
+    const filled=rows.filter(r=>{const t=aText(r[i]).trim();return t!==''&&t!=='—'}).length;
+    if(filled/rows.length<lim)drop.add(i);
+  }
+  if(!drop.size)return[headers,rows];
+  return[headers.filter((_,i)=>!drop.has(i)),rows.map(r=>r.filter((_,i)=>!drop.has(i)))];
+}
+
+function aSiteName(){
+  for(const d of S.colls.site||[])if(d.desc||d.name)return String(d.desc||d.name);
+  for(const d of S.colls.setting||[])if(d.key==='super_identity'&&d.name)return String(d.name);
+  return'Unknown site';
+}
+// Read from the archive's `version` file during extraction — not inferred, so
+// an absent file is reported as unknown rather than guessed at from settings.
+function aVersion(){return S.ver||'Not recorded in backup'}
+
+// id → document indexes, built once per report
+function aNetIndex(){const m={};for(const n of S.colls.networkconf||[])m[aOid(n._id)]=n;return m}
+function aZoneIndex(){const m={};for(const z of S.colls.firewallzone||[])m[aOid(z._id)]=z.name||z.zone_key||'(unnamed)';return m}
+
+function aNetworkRows(){
+  const nets=(S.colls.networkconf||[]).slice().sort((a,b)=>
+    (Number(a.vlan)||0)-(Number(b.vlan)||0)||String(a.name||'').localeCompare(String(b.name||'')));
+  return nets.map(n=>{
+    const dhcp=n.dhcpd_enabled?(n.dhcpd_start&&n.dhcpd_stop?`${n.dhcpd_start} – ${n.dhcpd_stop}`:'Enabled'):'Off';
+    return[aStr(n.name),aStr(n.purpose),n.vlan_enabled===false?'untagged':aStr(n.vlan),
+      {html:`<span class="mono">${esc(aStr(n.ip_subnet))}</span>`},dhcp,aBool(n.enabled)];
+  });
+}
+
+// Zone membership is stored on the network (networkconf.firewall_zone_id), not
+// as a member list on the zone — older backups do carry an explicit list, so
+// honour that when present and otherwise invert the network→zone references.
+function aZoneMembers(){
+  const byZone={};
+  for(const n of S.colls.networkconf||[]){
+    const zid=aOid(n.firewall_zone_id);
+    if(zid)(byZone[zid]=byZone[zid]||[]).push(n.name||'(unnamed)');
+  }
+  return byZone;
+}
+function aZoneRows(netIdx,slots){
+  const byZone=aZoneMembers();
+  const slotOf={};for(const[k,v]of Object.entries(slots||{}))slotOf[v]=k;
+  return(S.colls.firewallzone||[]).map(z=>{
+    const ids=Array.isArray(z.network_ids)?z.network_ids:(Array.isArray(z.zone_members)?z.zone_members:null);
+    const members=ids?ids.map(id=>{const n=netIdx[aOid(id)];return n?(n.name||'(unnamed)'):aOid(id)})
+                     :(byZone[aOid(z._id)]||[]);
+    const name=z.name||z.zone_key;
+    return[aStr(name),aStr(slotOf[name]),members.length?members.join(', '):'—',String(members.length),aBool(z.default_zone)];
+  });
+}
+
+// Firewall rule verbs and zone tokens as they appear in v10 chain names.
+const FW_ACTIONS=new Set(['ACCEPT','ALLOW','DROP','REJECT','BLOCK','DENY','RETURN','MASQUERADE','LOG']);
+const FW_ZONE_TOKENS=new Set(['WAN','LAN','LOCAL','GUEST','VPN','DMZ','ZONED','IN','OUT','NAT','FORWARD',
+  'CUSTOM','CUSTOM1','CUSTOM2','CUSTOM3','CUSTOM4','HOTSPOT','INTERNAL','EXTERNAL','GATEWAY']);
+
+// User-created zones are compiled to CUSTOM1..CUSTOMn slots, and rule names
+// reference the slot rather than the zone. The gateway's generated config names
+// each slot ("CUSTOM1_subnets" → "corporate zone subnets"), so read the mapping
+// from there instead of guessing at creation order. Zone names only.
+function aCustomZoneSlots(){
+  const map={};
+  for(const d of S.colls.device||[]){
+    if(typeof d.system_config!=='string')continue;
+    for(const m of d.system_config.matchAll(/"name"\s*:\s*"CUSTOM(\d+)_subnets"[^}]*\}\s*,\s*"description"\s*:\s*"(.*?) zone subnets"/g))
+      map['CUSTOM'+m[1]]=m[2];
+  }
+  return map;
+}
+// Chain names encode the pair: WAN_LOCAL_ALLOW → WAN → LOCAL, GUEST_IN_BLOCK →
+// GUEST → IN. Strip the trailing verb, then split if both halves name a zone.
+function aPairFromToken(tok,slots){
+  if(!tok)return null;
+  const t=String(tok).toUpperCase().replace(/_(ALLOW|BLOCK|DROP|REJECT|DENY|FILTER|MASQUERADE|PORT_FORWARD)$/,'');
+  const p=t.split('_');
+  if(p.length!==2||!FW_ZONE_TOKENS.has(p[0])||!FW_ZONE_TOKENS.has(p[1]))return null;
+  const lbl=x=>(slots&&slots[x])?slots[x]:x;
+  return`${lbl(p[0])} → ${lbl(p[1])}`;
+}
+// Zone pair — newer backups may carry explicit source/destination zone ids;
+// this one encodes the pair in the jump target or the chain type instead.
+function aZonePair(r,zoneIdx,slots){
+  const nm=v=>{const k=aOid(v);return k?(zoneIdx[k]||k):null};
+  const s=nm((r.source||{}).zone_id)||nm(r.src_zone_id)||nm(r.src_zone);
+  const d=nm((r.destination||{}).zone_id)||nm(r.dst_zone_id)||nm(r.dst_zone);
+  if(s||d)return`${s||'—'} → ${d||'—'}`;
+  // Generated rules carry the exact pair in a bracketed name prefix, e.g.
+  // "[CUSTOM1_WAN]Allow All Traffic" — more precise than the chain type.
+  const br=/^\[([A-Z0-9_]+)\]/.exec(String(r.name||''));
+  if(br){const p=aPairFromToken(br[1],slots);if(p)return p}
+  const tgt=String(r.target||'').toUpperCase();
+  if(tgt&&!FW_ACTIONS.has(tgt)){const p=aPairFromToken(tgt,slots);if(p)return p}
+  const p2=aPairFromToken(r.ruleset||r.type,slots);
+  if(p2)return p2;
+  return aStr(r.ruleset||r.type);
+}
+// Action — v10 stores the verb in `target`; a non-verb target is a jump to
+// another chain, which the zone-pair column already names.
+function aRuleAction(r){
+  const t=String(r.target||'').toUpperCase();
+  if(FW_ACTIONS.has(t))return t;
+  if(r.action)return String(r.action).toUpperCase();
+  if(t)return'JUMP';
+  // NAT chains name their own verb (NAT_WAN_MASQUERADE, DNAT, SNAT).
+  const ty=String(r.type||'').toUpperCase();
+  if(/MASQUERADE/.test(ty))return'MASQUERADE';
+  if(/^[DS]NAT$/.test(ty))return ty;
+  return'—';
+}
+function aRuleIndex(r){
+  const v=r.rule_index!==undefined?r.rule_index:r.index;
+  const n=Number(v);return Number.isFinite(n)?n:Number.MAX_SAFE_INTEGER;
+}
+// The user-authored zone policies — what the UI calls Firewall Rules. These
+// carry explicit source/destination zone ids, so aZonePair resolves them by name.
+function aPolicyRows(zoneIdx,slots){
+  const pol=(S.colls.firewallpolicy||[]).map((r,i)=>({r,i}))
+    .sort((a,b)=>aRuleIndex(a.r)-aRuleIndex(b.r)||a.i-b.i);
+  return pol.map(({r},i)=>{
+    const act=aRuleAction(r);
+    const cls=/ALLOW|ACCEPT/.test(act)?'act-allow':(/BLOCK|DROP|REJECT|DENY/.test(act)?'act-block':'');
+    return[String(i+1),aStr(r.name||r.description),aZonePair(r,zoneIdx,slots),
+      {html:`<span class="act ${cls}">${esc(act)}</span>`},
+      aStr(r.protocol),aBool(r.enabled),aBool(r.logging)];
+  });
+}
+// Adopted hardware. Nothing here is a credential — model, name, firmware, state.
+function aDeviceRows(){
+  const label={0:'Offline',1:'Connected',2:'Pending adoption',4:'Upgrading',5:'Provisioning',6:'Unreachable',11:'Isolated'};
+  // The collection also holds per-device config snapshots (device_type +
+  // system_config, no hardware fields) — those are not inventory entries.
+  return(S.colls.device||[]).filter(d=>d.model||d.version)
+    .sort((a,b)=>String(a.type||'').localeCompare(String(b.type||''))||String(a.model||'').localeCompare(String(b.model||'')))
+    .map(d=>{
+      const state=d.disabled?'Disabled':(d.adopted===false?'Not adopted':(label[d.state]||(d.adopted?'Adopted':'—')));
+      return[aStr(d.model),aStr(d.name),aStr(d.version),state];
+    });
+}
+function aRuleRows(zoneIdx,slots){
+  // Group by chain, then explicit index where the backup records one, then the
+  // order the documents are stored in — which is the order they are evaluated.
+  const rules=(S.colls.firewallrule||[]).map((r,i)=>({r,i})).sort((a,b)=>
+    String(a.r.ruleset||a.r.type||'').localeCompare(String(b.r.ruleset||b.r.type||''))
+    ||aRuleIndex(a.r)-aRuleIndex(b.r)||a.i-b.i);
+  return rules.map(({r},i)=>{
+    const act=aRuleAction(r);
+    const cls=/ALLOW|ACCEPT/.test(act)?'act-allow':(/BLOCK|DROP|REJECT|DENY/.test(act)?'act-block':'');
+    return[String(i+1),aStr(r.ruleset||r.type),aStr(r.name||r.description),aZonePair(r,zoneIdx,slots),
+      {html:`<span class="act ${cls}">${esc(act)}</span>`},
+      aStr(r.protocol),aBool(r.enabled),aBool(r.logging!==undefined?r.logging:r.logging_enabled)];
+  });
+}
+
+function aWifiSecurity(w){
+  const map={open:'Open (no encryption)',wpapsk:'WPA-PSK',wpaeap:'WPA-Enterprise (802.1X)',wep:'WEP',osen:'OSEN'};
+  const p=[map[w.security]||aStr(w.security)];
+  if(w.wpa_mode)p.push(String(w.wpa_mode).toUpperCase());
+  if(w.wpa3_support)p.push('WPA3');
+  if(w.pmf_mode&&w.pmf_mode!=='disabled')p.push('PMF '+w.pmf_mode);
+  return p.join(' · ');
+}
+function aWifiRows(netIdx){
+  return(S.colls.wlanconf||[]).slice().sort((a,b)=>
+    String(a.name||a.essid||'').localeCompare(String(b.name||b.essid||''))).map(w=>{
+    const n=netIdx[aOid(w.networkconf_id)];
+    const vlan=w.vlan!==undefined&&w.vlan!==null&&w.vlan!==''?w.vlan:(n?n.vlan:undefined);
+    return[aStr(w.name||w.essid),aWifiSecurity(w),n?aStr(n.name):'—',
+      vlan===undefined||vlan===null||vlan===''?'untagged':String(vlan),
+      aBool(w.enabled),aBool(w.is_guest),aBool(w.hide_ssid)];
+  });
+}
+
+// WireGuard — names only. Keys, addresses and endpoints are deliberately omitted.
+function aWgRows(netIdx){
+  const rows=[];
+  const net=d=>{const n=netIdx[aOid(d.networkconf_id)];return n?aStr(n.name):'—'};
+  for(const d of S.colls.wireguard||[]){
+    const iface=aStr(d.name||d.interface_name);
+    const peers=Array.isArray(d.peers)?d.peers:(Array.isArray(d.wg_peers)?d.wg_peers:null);
+    if(peers&&peers.length)peers.forEach(p=>rows.push([aStr(p.name||p.description||p.remark),iface,aBool(p.enabled)]));
+    else rows.push([iface,net(d),aBool(d.enabled)]);
+  }
+  return rows;
+}
+
+const AUDIT_CSS=`*{margin:0;padding:0;box-sizing:border-box}
+@page{size:A4;margin:14mm}
+body{font:11px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.wrap{max-width:182mm;margin:0 auto;padding:16px}
+header.rpt{border-bottom:2px solid #111;padding-bottom:10px}
+h1{font-size:18px;letter-spacing:-.2px}
+.sub{font-size:10.5px;color:#555;margin-top:3px;text-transform:uppercase;letter-spacing:.6px}
+dl.meta{display:grid;grid-template-columns:auto 1fr;gap:2px 14px;margin-top:10px;font-size:10.5px}
+dt{color:#666}dd{font-weight:600}
+.notice{margin:12px 0 18px;border:1px solid #999;border-left:3px solid #111;padding:8px 10px;font-size:10.5px;background:#f5f5f5}
+.notice strong{display:block;margin-bottom:2px}
+section{margin-bottom:20px}
+h2{font-size:13px;margin-bottom:2px;padding-bottom:3px;border-bottom:1px solid #bbb;break-after:avoid;page-break-after:avoid}
+.cap{font-size:9.5px;color:#666;margin:3px 0 7px}
+table{width:100%;border-collapse:collapse;font-size:10px}
+thead{display:table-header-group}
+th{text-align:left;background:#ececec;border:1px solid #bbb;padding:4px 6px;font-weight:700;white-space:nowrap}
+td{border:1px solid #ccc;padding:4px 6px;vertical-align:top}
+tbody tr:nth-child(even) td{background:#fafafa}
+tr{break-inside:avoid;page-break-inside:avoid}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.act{font-weight:700}.act-allow{color:#0a6b31}.act-block{color:#a11}
+.empty{font-size:10.5px;color:#666;font-style:italic;padding:6px 0}
+footer.rpt{margin-top:18px;border-top:1px solid #bbb;padding-top:8px;font-size:9.5px;color:#666}
+@media print{.wrap{padding:0;max-width:none}}`;
+
+function buildAuditReport(){
+  const netIdx=aNetIndex(),zoneIdx=aZoneIndex(),slots=aCustomZoneSlots();
+  const nRows=aNetworkRows(),zRows=aZoneRows(netIdx,slots),
+        pRows=aPolicyRows(zoneIdx,slots),rRows=aRuleRows(zoneIdx,slots),
+        wRows=aWifiRows(netIdx),gRows=aWgRows(netIdx),dRows=aDeviceRows();
+  const[pHead,pBody]=aPrune(['#','Name','Zone pair (source → destination)','Action','Protocol','Enabled','Logged'],pRows,[4,5,6]);
+  const[rHead,rBody]=aPrune(['#','Chain','Name','Zone pair (source → destination)','Action','Protocol','Enabled','Logged'],rRows,[5,6,7]);
+  const site=aSiteName(),ver=aVersion(),gen=new Date().toLocaleString();
+  return`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<title>UniFi Audit Report — ${esc(site)}</title><style>${AUDIT_CSS}</style></head><body><div class="wrap">
+<header class="rpt"><h1>${esc(site)}</h1><div class="sub">UniFi Network Configuration Audit</div>
+<dl class="meta">
+<dt>Controller version</dt><dd>${esc(ver)}</dd>
+<dt>Backup file</dt><dd>${esc(S.fn||'—')}</dd>
+<dt>Generated</dt><dd>${esc(gen)}</dd>
+</dl></header>
+<div class="notice"><strong>Credentials excluded by design.</strong>
+This report contains no pre-shared keys, WiFi passphrases, RADIUS or VPN secrets, private or public keys, PPPoE credentials, or API tokens. WireGuard entries are listed by name only. It is safe to share with third parties.</div>
+
+<section><h2>Networks / VLANs</h2><div class="cap">${nRows.length} network${nRows.length===1?'':'s'} defined in this site.</div>
+${aTable(['Name','Purpose','VLAN','Subnet','DHCP range','Enabled'],nRows,'No networks found in this backup.')}</section>
+
+<section><h2>Firewall Zones</h2><div class="cap">${zRows.length} zone${zRows.length===1?'':'s'} defined. "Slot" is the CUSTOMn identifier the gateway compiles a user-created zone to; rule names below reference the slot.</div>
+${aTable(['Zone','Slot','Member networks','Members','Default'],zRows,'No firewall zones found — this backup may predate zone-based firewalling.')}</section>
+
+<section><h2>Firewall Policies</h2>
+<div class="cap">${pRows.length} user-defined polic${pRows.length===1?'y':'ies'}, in evaluation order. These are the rules authored in the controller; the gateway's own compiled ruleset is in the appendix.</div>
+${aTable(pHead,pBody,'No user-defined firewall policies found in this backup.')}</section>
+
+<section><h2>WiFi SSIDs</h2><div class="cap">${wRows.length} SSID${wRows.length===1?'':'s'}. Passphrases and RADIUS secrets are omitted.</div>
+${aTable(['SSID','Security mode','Network','VLAN','Enabled','Guest','Hidden'],wRows,'No WLANs found in this backup.')}</section>
+
+<section><h2>WireGuard Peers</h2><div class="cap">Names only — public keys, private keys, allowed IPs and endpoints are omitted.</div>
+${aTable(['Peer / interface','Belongs to','Enabled'],gRows,'No WireGuard configuration found in this backup.')}</section>
+
+<section><h2>Device Inventory</h2><div class="cap">${dRows.length} adopted device${dRows.length===1?'':'s'}.</div>
+${aTable(['Model','Name','Firmware','State'],dRows,'No devices found in this backup.')}</section>
+
+<section><h2>Appendix — Compiled Firewall Ruleset</h2>
+<div class="cap">${rRows.length} rule${rRows.length===1?'':'s'} generated by the gateway from the policies above plus its own built-in defaults, grouped by chain and listed within each chain in the order they are evaluated. Included for completeness; the policies above are what you configured. A JUMP action hands evaluation to the chain named in the zone-pair column.</div>
+${aTable(rHead,rBody,'No compiled firewall rules found in this backup.')}</section>
+
+<footer class="rpt">Generated by UniFi Backup Explorer from ${esc(S.fn||'a local backup')} — processed entirely in the browser. Credentials are excluded from this report by design.</footer>
+</div></body></html>`;
+}
+
+function openAuditReport(){
+  if(S.phase!=='ready'){toast('Load a backup first','error');return}
+  const w=window.open('','_blank');
+  if(!w){toast('Popup blocked — allow popups for this page to open the audit report','error');return}
+  const html=buildAuditReport();
+  const leaked=auditLeakCheck(html);
+  if(leaked.length){w.close();toast(`Audit report aborted: ${leaked.length} credential value(s) would have been included. This is a bug — please report it.`,'error');return}
+  w.document.open();w.document.write(html);w.document.close();
+  setTimeout(()=>{try{w.focus();w.print()}catch(e){}},300);
+  toast('Audit report opened — credentials excluded');
+}
 
 // Event delegation — replaces inline onclick/oninput handlers to prevent injection
 document.getElementById('app').addEventListener('click',function(e){
@@ -241,7 +573,9 @@ document.getElementById('app').addEventListener('input',function(e){
   else if(e.target.closest('.content-filter'))uDF(e.target.value);
 });
 document.getElementById('fileInfo').addEventListener('click',function(e){
-  if(e.target.closest('[data-action="reset"]'))reset();
+  const el=e.target.closest('[data-action]');if(!el)return;
+  if(el.dataset.action==='reset')reset();
+  else if(el.dataset.action==='audit')openAuditReport();
 });
 
 // Firewall rule type strings used in UniFi v10.x zone-based policy engine
@@ -258,8 +592,17 @@ function cat(d){
   // Settings — key field with or without site_id (super_* settings have no site_id)
   if(d.key!==undefined&&(d.site_id!==undefined||String(d.key).startsWith('super_')))return'setting';
 
-  // Firewall — zone-based (v7.x+)
+  // Firewall — zone-based (v7.x+). Built-in zones carry zone_key; user-created
+  // zones carry only name + default_zone, so match on that too or they fall
+  // through to uncategorized and disappear from the zone list.
   if(d.zone_key!==undefined||d.zone_members!==undefined)return'firewallzone';
+  if(d.default_zone!==undefined&&d.name!==undefined&&d.site_id!==undefined)return'firewallzone';
+
+  // Firewall — v10 zone policies: the rules the user actually authors in the UI,
+  // distinct from the compiled chains in firewallrule. Must precede the
+  // scheduletask check below, because a policy carries a `schedule` object and
+  // would otherwise be filed as a scheduled task.
+  if(d.source!==undefined&&d.destination!==undefined&&d.action!==undefined)return'firewallpolicy';
   if(d.src_zone!==undefined&&d.dst_zone!==undefined)return'zonematrix';
 
   // Firewall — v10.x typed policy rules (ZONED_IN, WAN_IN_BLOCK etc.)
@@ -328,7 +671,7 @@ function cat(d){
   if(d.member_table!==undefined||(d.tag_type!==undefined&&d.name!==undefined))return'tag';
 
   // Scheduled tasks
-  if(d.job!==undefined||(d.schedule!==undefined&&d.action!==undefined))return'scheduletask';
+  if(d.job!==undefined||d.cron_expr!==undefined||(d.schedule!==undefined&&d.action!==undefined))return'scheduletask';
 
   // VPN / WireGuard / Teleport
   if(d.wg_public_key!==undefined||d.wg_private_key!==undefined||(d.public_key!==undefined&&d.allowed_ips!==undefined))return'wireguard';
@@ -431,6 +774,7 @@ async function proc(file){
     // Parse BSON
     set({step:'Parsing database…'});await wait(50);
     const colls={};
+    let ver='';
 
     for(const entry of entries_raw){
       let data = await entry.getData();
@@ -453,6 +797,14 @@ async function proc(file){
         let unc=0;
         for(const d of docs){const cn=cat(d)||'uncategorized';if(cn==='uncategorized')unc++;if(!colls[cn])colls[cn]=[];colls[cn].push(d)}
         if(unc)log('warn',`${unc} uncategorized docs`);
+      }else if(fname==='version'){
+        // Controller version that wrote the backup. Plain text ("10.1.5") in most
+        // builds, occasionally JSON — take the first version-shaped token either way.
+        if(data.byteLength>4096){log('warn','version file implausibly large, ignoring');continue}
+        const txt=new TextDecoder().decode(new Uint8Array(data));
+        const m=txt.match(/\d+\.\d+(?:\.\d+)*(?:[-+][0-9A-Za-z.]+)?/);
+        if(m){ver=m[0].slice(0,32);log('ok',`Controller version: ${ver}`)}
+        else log('warn','version file present but held no recognisable version');
       }
     }
 
@@ -460,7 +812,8 @@ async function proc(file){
     const sorted={};Object.keys(colls).sort().forEach(k=>sorted[k]=colls[k]);
     const td=Object.values(sorted).reduce((s,d)=>s+d.length,0);
     log('ok',`✓ ${Object.keys(sorted).length} collections, ${td} documents`);
-    set({phase:'ready',colls:sorted,act:null,step:''});
+    if(!ver)log('warn','No version file in backup — controller version unknown');
+    set({phase:'ready',colls:sorted,ver,act:null,step:''});
     toast(`Decrypted: ${Object.keys(sorted).length} collections, ${td.toLocaleString()} docs`);
   }catch(err){console.error(err);log('err',err.message);toast(err.message,'error');set({step:'❌ '+err.message})}
 }
