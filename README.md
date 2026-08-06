@@ -2,6 +2,10 @@
 
 Browser-based decryptor and explorer for UniFi Network Application backup files (`.unf`). No installation. No terminal. No data leaves your machine.
 
+**Try it:** [mallianet.github.io/unifi-backup-explorer](https://mallianet.github.io/unifi-backup-explorer/)
+
+The hosted page is the same single `index.html` from this repository — nothing is uploaded to it. Your `.unf` file is read and decrypted locally in your browser; the backup never leaves your machine. If you would rather not trust the hosted copy, download the file and open it from disk instead.
+
 ![UniFi Backup Explorer UI](docs/screenshot.png)
 
 ## Why this exists
@@ -22,10 +26,14 @@ This tool does everything in the browser. Drag the `.unf` file onto the page, re
 
 ## How to use
 
-1. Download `unifi_backup_explorer_v2.html` from this repository
+Either open the [hosted page](https://mallianet.github.io/unifi-backup-explorer/), or run it locally:
+
+1. Download `index.html` from this repository
 2. Open it in any modern browser (Chrome, Firefox, Safari, Edge)
 3. Drag your `.unf` backup file onto the page
 4. Browse the parsed collections and export what you need
+
+The tool was previously named `unifi_backup_explorer_v2.html`. That filename still resolves — it is now a small page that redirects to `index.html`, so existing links keep working.
 
 ## Security model
 
@@ -54,7 +62,9 @@ Exported JSON contains credentials in cleartext — WiFi passphrases, WireGuard 
 
 ## Hosting note
 
-If this page is ever served over HTTP rather than opened as a local file, set `Content-Security-Policy` and `X-Frame-Options: DENY` as server response headers.
+The page carries its own Content-Security-Policy as a `<meta http-equiv>` tag, which is what applies when the file is opened from disk or served from GitHub Pages — Pages does not allow custom response headers, so `Content-Security-Policy` and `X-Frame-Options` cannot be set there. The meta-tag CSP includes `frame-ancestors 'none'`, though note that `frame-ancestors` is ignored when delivered via meta tag rather than a response header.
+
+If you self-host this page on a server you control, set `Content-Security-Policy` and `X-Frame-Options: DENY` as real response headers. Header-delivered policy supersedes the meta tag and is the only way to get working clickjacking protection.
 
 ## License
 

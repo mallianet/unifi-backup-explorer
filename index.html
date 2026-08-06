@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data:; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'">
+<title>UniFi Backup Explorer v2.1</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg==" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js" integrity="sha512-g2TeAWw5GPnX7z0Kn8nFbYfeHcvAu/tx6d6mrLe/90mkCxO+RcptyYpksUz35EO337F83bZwcmUyHiHamspkfg==" crossorigin="anonymous"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+  :root{--bg0:#0a0e14;--bg1:#111820;--bg2:#1a2230;--bgH:#1e2a3a;--bd:#1e2a3a;--bdA:#2a3a4e;--t1:#c8d6e5;--t2:#6b7d93;--t3:#3d5068;--blue:#3b82f6;--cyan:#22d3ee;--green:#10b981;--amber:#f59e0b;--red:#ef4444;--purple:#8b5cf6;--mono:'JetBrains Mono',monospace;--sans:'Space Grotesk',sans-serif}
+  *{margin:0;padding:0;box-sizing:border-box}body{font-family:var(--sans);background:var(--bg0);color:var(--t1);min-height:100vh;overflow:hidden}
+  .header{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid var(--bd);background:var(--bg1)}
+  .header-left{display:flex;align-items:center;gap:12px}.logo{width:32px;height:32px;background:linear-gradient(135deg,var(--cyan),var(--blue));border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#000;font-family:var(--mono)}
+  .header h1{font-size:16px;font-weight:600;letter-spacing:-.3px}.header-subtitle{font-size:11px;color:var(--t3);font-family:var(--mono);letter-spacing:1px;text-transform:uppercase}
+  .file-info{font-family:var(--mono);font-size:12px;color:var(--t2);display:flex;align-items:center;gap:8px}.file-info .badge{background:var(--bg2);padding:3px 10px;border-radius:4px;border:1px solid var(--bd);font-size:11px}.file-info .badge.green{border-color:#10b98144;color:var(--green)}
+  .drop-zone-container{display:flex;align-items:center;justify-content:center;height:calc(100vh - 65px);padding:40px}
+  .drop-zone{width:100%;max-width:560px;border:2px dashed var(--bdA);border-radius:16px;padding:60px 40px;text-align:center;cursor:pointer;transition:all .25s;background:var(--bg1);position:relative;overflow:hidden}
+  .drop-zone::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 40%,rgba(34,211,238,.03) 0%,transparent 70%);pointer-events:none}
+  .drop-zone:hover,.drop-zone.dragover{border-color:var(--cyan);background:#111d2b;box-shadow:0 0 40px rgba(34,211,238,.05)}.drop-zone.dragover{transform:scale(1.01)}
+  .drop-icon{font-size:48px;margin-bottom:20px;opacity:.6}.drop-zone h2{font-size:18px;font-weight:600;margin-bottom:8px}.drop-zone p{font-size:13px;color:var(--t2);margin-bottom:4px}
+  .drop-zone .hint{font-family:var(--mono);font-size:11px;color:var(--t3);margin-top:16px}.drop-zone input{display:none}
+  .processing{display:flex;flex-direction:column;align-items:center;justify-content:center;height:calc(100vh - 65px);gap:16px}
+  .spinner{width:40px;height:40px;border:3px solid var(--bd);border-top-color:var(--cyan);border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+  .processing-text{font-size:14px;color:var(--t2)}.processing-step{font-family:var(--mono);font-size:12px;color:var(--t3)}
+  .debug-log{font-family:var(--mono);font-size:11px;color:var(--t3);background:var(--bg2);border:1px solid var(--bd);border-radius:8px;padding:12px;margin-top:12px;max-width:700px;width:90%;max-height:260px;overflow-y:auto;text-align:left;line-height:1.6}
+  .debug-log .log-ok{color:var(--green)}.debug-log .log-warn{color:var(--amber)}.debug-log .log-err{color:var(--red)}.debug-log .log-info{color:var(--cyan)}
+  .main-layout{display:grid;grid-template-columns:280px 1fr;height:calc(100vh - 65px)}
+  .sidebar{border-right:1px solid var(--bd);background:var(--bg1);display:flex;flex-direction:column;overflow:hidden}
+  .sidebar-header{padding:16px;border-bottom:1px solid var(--bd)}
+  .search-box{width:100%;padding:8px 12px;background:var(--bg2);border:1px solid var(--bd);border-radius:6px;color:var(--t1);font-family:var(--mono);font-size:12px;outline:none}.search-box:focus{border-color:var(--blue)}.search-box::placeholder{color:var(--t3)}
+  .sidebar-stats{padding:12px 16px;display:flex;gap:12px;border-bottom:1px solid var(--bd);font-family:var(--mono);font-size:11px}
+  .stat{display:flex;flex-direction:column;gap:2px}.stat-label{color:var(--t3);text-transform:uppercase;letter-spacing:.5px;font-size:10px}.stat-value{color:var(--cyan);font-weight:600}
+  .collection-list{flex:1;overflow-y:auto;padding:8px}.collection-list::-webkit-scrollbar{width:4px}.collection-list::-webkit-scrollbar-thumb{background:var(--bdA);border-radius:2px}
+  .collection-group-label{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--t3);padding:12px 8px 6px}
+  .collection-item{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-radius:6px;cursor:pointer;transition:all .15s;margin-bottom:2px}
+  .collection-item:hover{background:var(--bgH)}.collection-item.active{background:var(--bg2);border:1px solid var(--bdA)}
+  .collection-item .name{font-family:var(--mono);font-size:12px;font-weight:500}
+  .collection-item .count{font-family:var(--mono);font-size:11px;color:var(--t3);background:var(--bg0);padding:1px 8px;border-radius:10px}.collection-item.active .count{color:var(--cyan)}
+  .collection-item .dot{width:6px;height:6px;border-radius:50%;margin-right:8px;flex-shrink:0}.collection-item .left{display:flex;align-items:center}
+  .content{display:flex;flex-direction:column;overflow:hidden;background:var(--bg0)}
+  .content-header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--bd);background:var(--bg1);flex-shrink:0}
+  .content-title{font-size:14px;font-weight:600}.content-title span{color:var(--t3);font-weight:400;margin-left:8px;font-size:12px;font-family:var(--mono)}
+  .content-actions{display:flex;gap:8px}
+  .btn{padding:6px 14px;border-radius:6px;border:1px solid var(--bd);background:var(--bg2);color:var(--t2);font-family:var(--mono);font-size:11px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:6px}
+  .btn:hover{border-color:var(--blue);color:var(--t1)}.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}.btn.primary:hover{background:#2563eb}
+  .content-filter{display:flex;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid var(--bd);background:var(--bg1);flex-shrink:0}
+  .content-filter input{flex:1;padding:6px 12px;background:var(--bg2);border:1px solid var(--bd);border-radius:4px;color:var(--t1);font-family:var(--mono);font-size:12px;outline:none}
+  .content-filter input:focus{border-color:var(--blue)}.content-filter input::placeholder{color:var(--t3)}
+  .doc-list{flex:1;overflow-y:auto;padding:12px 20px}.doc-list::-webkit-scrollbar{width:6px}.doc-list::-webkit-scrollbar-thumb{background:var(--bdA);border-radius:3px}
+  .doc-card{background:var(--bg1);border:1px solid var(--bd);border-radius:8px;margin-bottom:8px;overflow:hidden}.doc-card:hover{border-color:var(--bdA)}
+  .doc-card-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;cursor:pointer;user-select:none}.doc-card-header:hover{background:var(--bgH)}
+  .doc-card-id{font-family:var(--mono);font-size:12px;color:var(--cyan)}.doc-card-meta{font-family:var(--mono);font-size:11px;color:var(--t3);display:flex;gap:12px}
+  .doc-card-body{border-top:1px solid var(--bd);padding:12px 16px;display:none}.doc-card.expanded .doc-card-body{display:block}
+  .doc-card-toggle{color:var(--t3);font-size:14px;transition:transform .2s}.doc-card.expanded .doc-card-toggle{transform:rotate(90deg)}
+  .json-tree{font-family:var(--mono);font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-all}
+  .json-key{color:#7dd3fc}.json-string{color:#86efac}.json-number{color:#fcd34d}.json-bool{color:#c084fc}.json-null{color:#6b7280;font-style:italic}.json-bracket{color:#6b7d93}
+  .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--t3);gap:8px}.empty-state-icon{font-size:36px;opacity:.4}
+  .toast{position:fixed;bottom:24px;right:24px;background:var(--bg2);border:1px solid var(--bdA);border-radius:8px;padding:12px 20px;font-family:var(--mono);font-size:12px;color:var(--t1);z-index:100;animation:slideUp .3s;box-shadow:0 8px 32px rgba(0,0,0,.3);max-width:500px;white-space:pre-wrap}
+  .toast.success{border-color:#10b98144}.toast.error{border-color:#ef444444;color:var(--red)}@keyframes slideUp{from{transform:translateY(20px);opacity:0}}
+  .reset-btn{background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:4px 8px;border-radius:4px}.reset-btn:hover{color:var(--red);background:rgba(239,68,68,.1)}
+  .view-tabs{display:flex;gap:2px;background:var(--bg0);border-radius:6px;padding:2px}
+  .view-tab{padding:4px 12px;border-radius:4px;border:none;background:transparent;color:var(--t3);font-family:var(--mono);font-size:11px;cursor:pointer}.view-tab.active{background:var(--bg2);color:var(--t1)}.view-tab:hover:not(.active){color:var(--t2)}
+  .raw-json{padding:20px;font-family:var(--mono);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;overflow-y:auto;flex:1;color:var(--t2)}
+  .summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;padding:20px;overflow-y:auto;flex:1}
+  .summary-card{background:var(--bg1);border:1px solid var(--bd);border-radius:8px;padding:16px;cursor:pointer;transition:all .15s}
+  .summary-card:hover{border-color:var(--blue);transform:translateY(-1px)}.summary-card h3{font-family:var(--mono);font-size:13px;font-weight:600;margin-bottom:4px}
+  .summary-card .desc{font-size:11px;color:var(--t3);margin-bottom:8px}.summary-card .doc-count{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--cyan)}.summary-card .doc-label{font-size:11px;color:var(--t3);font-family:var(--mono)}
+  .back-btn{background:var(--bg2);border:1px solid var(--bd);color:var(--t2);cursor:pointer;font-family:var(--mono);font-size:12px;padding:8px 16px;border-radius:6px;margin-top:16px}.back-btn:hover{border-color:var(--blue);color:var(--t1)}
+</style>
+</head>
+<body>
+<div class="header"><div class="header-left"><div class="logo">UB</div><div><h1>UniFi Backup Explorer <span style="font-size:11px;color:var(--cyan);font-family:var(--mono)">v2.1</span></h1><div class="header-subtitle">Client-Side Decryptor · v10.x Aware</div></div></div><div class="file-info" id="fileInfo"></div></div>
+<div id="app"></div>
+<script>
+// HTML escape — prevents XSS when inserting untrusted strings into innerHTML
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+
+// BSON Decoder
+class BSON{
+  constructor(buf){this.v=new DataView(buf);this.b=new Uint8Array(buf);this.o=0;this.l=buf.byteLength;this.d=0}
+  i32(){const v=this.v.getInt32(this.o,!0);this.o+=4;return v}
+  i64(){const l=this.v.getUint32(this.o,!0),h=this.v.getInt32(this.o+4,!0);this.o+=8;return h*0x100000000+l}
+  f64(){const v=this.v.getFloat64(this.o,!0);this.o+=8;return v}
+  u8(){return this.b[this.o++]}
+  cstr(){let s='';while(this.o<this.l){const c=this.b[this.o++];if(!c)break;s+=String.fromCharCode(c)}return s}
+  str(){const n=this.i32();if(n<1||this.o+n>this.l)throw new Error('BSON string length out of bounds');const s=new TextDecoder().decode(this.b.slice(this.o,this.o+n-1));this.o+=n;return s}
+  oid(){const h=Array.from(this.b.slice(this.o,this.o+12)).map(x=>x.toString(16).padStart(2,'0')).join('');this.o+=12;return h}
+  bin(){const n=this.i32();const t=this.u8();if(n<0||this.o+n>this.l)throw new Error('BSON binary length out of bounds');this.o+=n;return`<bin:${t} ${n}B>`}
+  doc(){if(++this.d>20){this.d--;throw new Error('BSON nesting too deep')}try{const sz=this.i32(),end=this.o-4+sz,d={};while(this.o<end-1){const t=this.u8();if(!t)break;const k=this.cstr();const v=this.val(t);if(k==='__proto__'||k==='constructor'||k==='prototype')continue;d[k]=v}this.o=end;return d}finally{this.d--}}
+  arr(){if(++this.d>20){this.d--;throw new Error('BSON nesting too deep')}try{const sz=this.i32(),end=this.o-4+sz,a=[];while(this.o<end-1){const t=this.u8();if(!t)break;this.cstr();a.push(this.val(t))}this.o=end;return a}finally{this.d--}}
+  val(t){switch(t){case 1:return this.f64();case 2:return this.str();case 3:return this.doc();case 4:return this.arr();case 5:return this.bin();case 6:return undefined;case 7:return{$oid:this.oid()};case 8:return this.u8()!==0;case 9:{const ms=this.i64();try{return{$date:new Date(ms).toISOString()}}catch(e){return{$date:'invalid',$dateMs:ms}}};case 10:return null;case 11:{const p=this.cstr(),f=this.cstr();return{$regex:p,$options:f}};case 13:return this.str();case 16:return this.i32();case 17:case 18:return this.i64();case 255:return{$minKey:1};case 127:return{$maxKey:1};default:throw new Error(`BSON type 0x${t.toString(16)} @${this.o}`)}}
+  static all(buf){const d=new BSON(buf),docs=[];let e=0;while(d.o<d.l-4){try{if(d.l-d.o<5)break;const sz=d.v.getInt32(d.o,!0);if(sz<5||sz>d.l-d.o)break;docs.push(d.doc())}catch(x){e++;if(e>10)break;d.o++}}return docs}
+}
+
+// Publicly documented UniFi Network Application backup encryption constants.
+// These are NOT secrets — Ubiquiti uses a fixed AES-128-CBC key/IV for all
+// Network Application backups. They are widely known and documented in the
+// UniFi community (key="bcyangkmluhomars", iv="ubntenterpriseap").
+const KEY='626379616e676b6d6c756f686d617273',IV='75626e74656e74657270726973656170';
+function hex2b(h){const b=new Uint8Array(h.length/2);for(let i=0;i<h.length;i+=2)b[i/2]=parseInt(h.substr(i,2),16);return b}
+
+async function decrypt(ab){
+  const key=hex2b(KEY),iv=hex2b(IV),BS=16;
+  const ck=await crypto.subtle.importKey('raw',key,{name:'AES-CBC'},!1,['decrypt']);
+  const aLen=Math.floor(ab.byteLength/BS)*BS;
+  if(!aLen)throw new Error('File too small');
+  const data=new Uint8Array(ab.slice(0,aLen));
+  log('info',`Data: ${aLen} bytes (${aLen/BS} blocks)`);
+
+  // Try PKCS7 first
+  try{const r=await crypto.subtle.decrypt({name:'AES-CBC',iv},ck,data);log('ok','Decrypted (PKCS7)');return r}catch(e){log('warn',`PKCS7: ${e.message}`)}
+
+  // NoPadding workaround: append encrypted padding block (needs encrypt permission)
+  try{
+    log('info','Trying NoPadding workaround...');
+    const ek=await crypto.subtle.importKey('raw',key,{name:'AES-CBC'},!1,['encrypt','decrypt']);
+    const lastBlock=data.slice(aLen-BS);
+    const padPlain=new Uint8Array(BS);padPlain.fill(BS);
+    const encPad=await crypto.subtle.encrypt({name:'AES-CBC',iv:lastBlock},ek,padPlain);
+    const full=new Uint8Array(aLen+BS);
+    full.set(data);full.set(new Uint8Array(encPad).slice(0,BS),aLen);
+    const r=await crypto.subtle.decrypt({name:'AES-CBC',iv},ek,full);
+    log('ok','Decrypted (NoPadding workaround)');
+    return r;
+  }catch(e){throw new Error(`Decryption failed: ${e.message}`)}
+}
+
+// Collection metadata
+const CM={
+  firewallrule:{l:'Firewall Rules',c:'#ef4444',g:'Security'},firewallgroup:{l:'Firewall Groups',c:'#ef4444',g:'Security'},
+  firewallzone:{l:'Firewall Zones',c:'#ef4444',g:'Security'},zonematrix:{l:'Zone Matrix',c:'#ef4444',g:'Security'},
+  trafficrule:{l:'Traffic Rules',c:'#f59e0b',g:'Security'},trafficroute:{l:'Traffic Routes',c:'#f59e0b',g:'Security'},
+  networkconf:{l:'Networks / VLANs',c:'#3b82f6',g:'Network'},wlanconf:{l:'WiFi / WLANs',c:'#8b5cf6',g:'Network'},
+  portconf:{l:'Switch Port Profiles',c:'#3b82f6',g:'Network'},portforward:{l:'Port Forwards',c:'#f59e0b',g:'Network'},
+  routing:{l:'Static Routes',c:'#3b82f6',g:'Network'},dhcpd:{l:'DHCP Settings',c:'#3b82f6',g:'Network'},
+  portprofile:{l:'Port Profiles',c:'#3b82f6',g:'Network'},switchport:{l:'Switch Ports',c:'#3b82f6',g:'Network'},
+  device:{l:'Adopted Devices',c:'#22d3ee',g:'Devices'},user:{l:'Known Clients',c:'#22d3ee',g:'Devices'},
+  usergroup:{l:'User Groups',c:'#22d3ee',g:'Devices'},
+  setting:{l:'Controller Settings',c:'#6b7d93',g:'System'},site:{l:'Site Info',c:'#6b7d93',g:'System'},
+  scheduletask:{l:'Scheduled Tasks',c:'#6b7d93',g:'System'},
+  dpiapp:{l:'DPI Apps',c:'#6b7d93',g:'System'},dpigroup:{l:'DPI Groups',c:'#6b7d93',g:'System'},
+  privilege:{l:'Privileges',c:'#6b7d93',g:'System'},tag:{l:'Tags',c:'#6b7d93',g:'System'},
+  alarm:{l:'Alarms',c:'#f59e0b',g:'System'},event:{l:'Events',c:'#6b7d93',g:'System'},
+  health:{l:'Health',c:'#10b981',g:'System'},stat:{l:'Statistics',c:'#6b7d93',g:'System'},
+  account:{l:'RADIUS Accounts',c:'#10b981',g:'Auth'},radiusprofile:{l:'RADIUS Profiles',c:'#10b981',g:'Auth'},
+  hotspot:{l:'Hotspot',c:'#8b5cf6',g:'Auth'},voucher:{l:'Vouchers',c:'#8b5cf6',g:'Auth'},
+  guesttoken:{l:'Guest Tokens',c:'#8b5cf6',g:'Auth'},
+  wlangroup:{l:'WLAN Groups',c:'#8b5cf6',g:'Network'},networkgroup:{l:'Network Groups',c:'#3b82f6',g:'Network'},
+  ipgroup:{l:'IP Groups',c:'#3b82f6',g:'Network'},
+  vpnclient:{l:'VPN Clients',c:'#10b981',g:'Network'},wireguard:{l:'WireGuard',c:'#10b981',g:'Network'},
+  teleport:{l:'Teleport VPN',c:'#10b981',g:'Network'},
+  tombstone:{l:'Deleted Records',c:'#3d5068',g:'System'},
+  schema:{l:'Schema Descriptors',c:'#3d5068',g:'System'},
+};
+function gm(n){const m=CM[n];return m?{label:m.l,color:m.c,group:m.g}:{label:n,color:'#6b7d93',group:'Other'}}
+
+// Collections known to contain credentials (WiFi passwords, RADIUS secrets, VPN keys, etc.)
+const SENSITIVE_COLLS=new Set(['wlanconf','wireguard','vpnclient','account','setting','radiusprofile','device','user']);
+
+// Debug log
+let logs=[];
+function log(t,m){logs.push({t,m});console.log(`[${t}] ${m}`);const el=document.getElementById('debugLog');if(el){el.innerHTML=logs.map(l=>`<div class="log-${l.t}">[${l.t.toUpperCase()}] ${esc(l.m)}</div>`).join('');el.scrollTop=el.scrollHeight}}
+
+// JSON formatter
+function fj(o,i=0){const p='  '.repeat(i),p1='  '.repeat(i+1);if(o===null)return'<span class="json-null">null</span>';if(o===undefined)return'<span class="json-null">undefined</span>';if(typeof o==='boolean')return`<span class="json-bool">${o}</span>`;if(typeof o==='number')return`<span class="json-number">${o}</span>`;if(typeof o==='string'){const e=esc(o);return`<span class="json-string">"${e.length>200?e.slice(0,200)+'…':e}"</span>`}if(Array.isArray(o)){if(!o.length)return'<span class="json-bracket">[]</span>';if(o.length<=3&&o.every(v=>typeof v!=='object'||v===null))return`<span class="json-bracket">[</span>${o.map(v=>fj(v,0)).join(', ')}<span class="json-bracket">]</span>`;return`<span class="json-bracket">[</span>\n${o.map(v=>`${p1}${fj(v,i+1)}`).join(',\n')}\n${p}<span class="json-bracket">]</span>`}if(typeof o==='object'){const k=Object.keys(o);if(!k.length)return'<span class="json-bracket">{}</span>';if(k.length===1&&k[0]==='$oid')return`<span class="json-string">"${esc(o.$oid)}"</span>`;if(k.length===1&&k[0]==='$date')return`<span class="json-number">${esc(o.$date)}</span>`;return`<span class="json-bracket">{</span>\n${k.map(key=>`${p1}<span class="json-key">"${esc(key)}"</span>: ${fj(o[key],i+1)}`).join(',\n')}\n${p}<span class="json-bracket">}</span>`}return String(o)}
+function dl(d,i){return esc(d.name||d.key||d.hostname||d.mac||d.purpose||d.essid||(d._id?(typeof d._id==='object'?d._id.$oid:String(d._id)).substring(0,12)+'…':null)||`Doc ${i+1}`)}
+function dm(d){const p=[];if(d.enabled!==undefined)p.push(d.enabled?'✓ on':'✗ off');if(d.vlan)p.push(`VLAN ${esc(d.vlan)}`);if(d.subnet)p.push(esc(d.subnet));if(d.type)p.push(esc(d.type));if(d.model)p.push(esc(d.model));if(d.action)p.push(esc(d.action));return p.join(' · ')}
+
+// State
+let S={phase:'drop',step:'',fn:'',fs:0,colls:{},act:null,sf:'',df:'',exp:new Set(),vm:'cards'};
+function set(u){Object.assign(S,u);render()}
+function render(){
+  const app=document.getElementById('app'),fi=document.getElementById('fileInfo');
+  // Save focus state before DOM rebuild
+  const ae=document.activeElement;
+  let focusId=null,selStart=null,selEnd=null;
+  if(ae&&ae.tagName==='INPUT'){
+    if(ae.classList.contains('search-box'))focusId='search-box';
+    else if(ae.closest&&ae.closest('.content-filter'))focusId='content-filter';
+    selStart=ae.selectionStart;selEnd=ae.selectionEnd;
+  }
+  if(S.phase==='drop'){fi.innerHTML='';app.innerHTML=rDrop();sDrop()}
+  else if(S.phase==='processing'){fi.innerHTML=`<span class="badge">${esc(S.fn)}</span>`;app.innerHTML=rProc()}
+  else if(S.phase==='ready'){fi.innerHTML=`<span class="badge green">✓ Decrypted</span><span class="badge">${esc(S.fn)}</span><span class="badge">${fSz(S.fs)}</span><button class="reset-btn" data-action="reset">✕</button>`;app.innerHTML=rMain()}
+  // Restore focus after DOM rebuild
+  if(focusId){
+    let target;
+    if(focusId==='search-box')target=app.querySelector('.search-box');
+    else if(focusId==='content-filter')target=app.querySelector('.content-filter input');
+    if(target){target.focus();if(selStart!==null){try{target.selectionStart=selStart;target.selectionEnd=selEnd}catch(e){}}}
+  }
+}
+function rDrop(){return`<div class="drop-zone-container"><div class="drop-zone" id="dz"><div class="drop-icon">📦</div><h2>Drop UniFi Backup</h2><p>Drag & drop a .unf Network backup file</p><p>or click to browse</p><div class="hint">AES-128-CBC · Client-side · Nothing leaves your machine</div><div class="hint" style="margin-top:8px;color:var(--amber)">⚠ Network Application backup (.unf) only — not UniFi OS System backup</div><input type="file" id="fi" accept=".unf"></div></div>`}
+function rProc(){return`<div class="processing"><div class="spinner"></div><div class="processing-text">Processing backup…</div><div class="processing-step">${esc(S.step)}</div><div class="debug-log" id="debugLog">${logs.map(l=>`<div class="log-${l.t}">[${l.t.toUpperCase()}] ${esc(l.m)}</div>`).join('')}</div><button class="back-btn" data-action="reset">← Back</button></div>`}
+function rMain(){
+  const c=gf(),gr={};for(const[n,d]of Object.entries(c)){const m=gm(n);if(!gr[m.group])gr[m.group]=[];gr[m.group].push({n,d,m})}
+  const ord=['Security','Network','Auth','Devices','System','Other'],sg=ord.filter(g=>gr[g]).map(g=>[g,gr[g]]);
+  const td=Object.values(S.colls).reduce((s,d)=>s+d.length,0);
+  return`<div class="main-layout"><div class="sidebar"><div class="sidebar-header"><input class="search-box" placeholder="Filter…" value="${esc(S.sf)}"></div><div class="sidebar-stats"><div class="stat"><span class="stat-label">Collections</span><span class="stat-value">${Object.keys(S.colls).length}</span></div><div class="stat"><span class="stat-label">Documents</span><span class="stat-value">${td.toLocaleString()}</span></div></div><div class="collection-list"><div class="collection-item ${!S.act?'active':''}" data-action="select"><div class="left"><span class="dot" style="background:var(--cyan)"></span><span class="name">Overview</span></div></div>${sg.map(([g,items])=>`<div class="collection-group-label">${esc(g)}</div>${items.map(it=>`<div class="collection-item ${S.act===it.n?'active':''}" data-action="select" data-value="${esc(it.n)}"><div class="left"><span class="dot" style="background:${it.m.color}"></span><span class="name">${esc(it.n)}</span></div><span class="count">${it.d.length}</span></div>`).join('')}`).join('')}</div></div><div class="content">${S.act?rColl():rOV()}</div></div>`}
+function rOV(){const gr={};for(const[n,d]of Object.entries(S.colls)){const m=gm(n);if(!gr[m.group])gr[m.group]=[];gr[m.group].push({n,d,m})}const ord=['Security','Network','Auth','Devices','System','Other'];return`<div class="content-header"><div class="content-title">Backup Overview</div><div class="content-actions"><button class="btn primary" data-action="export-all">⬇ Export All</button></div></div><div class="summary-grid">${ord.filter(g=>gr[g]).map(g=>gr[g].map(it=>`<div class="summary-card" data-action="select" data-value="${esc(it.n)}"><h3 style="color:${it.m.color}">${esc(it.n)}</h3><div class="desc">${esc(it.m.label)}</div><div class="doc-count">${it.d.length}</div><div class="doc-label">documents</div></div>`).join('')).join('')}</div>`}
+function rColl(){const n=S.act,m=gm(n);let d=S.colls[n]||[];if(S.df){const f=S.df.toLowerCase();d=d.filter(x=>JSON.stringify(x).toLowerCase().includes(f))}return`<div class="content-header"><div class="content-title" style="color:${m.color}">${esc(m.label)}<span>${d.length} docs</span></div><div class="content-actions"><div class="view-tabs"><button class="view-tab ${S.vm==='cards'?'active':''}" data-action="view-mode" data-value="cards">Cards</button><button class="view-tab ${S.vm==='raw'?'active':''}" data-action="view-mode" data-value="raw">Raw</button></div><button class="btn" data-action="export" data-value="${esc(n)}">⬇</button></div></div><div class="content-filter"><input placeholder="Search ${esc(n)}…" value="${esc(S.df)}"></div>${S.vm==='cards'?rCards(d,n):rRaw(d)}`}
+function rCards(docs,cn){if(!docs.length)return`<div class="empty-state"><div class="empty-state-icon">🔍</div><p>No matches</p></div>`;const mx=200,lim=docs.length>mx,rd=lim?docs.slice(0,mx):docs;return`<div class="doc-list">${rd.map((d,i)=>{const x=S.exp.has(`${cn}-${i}`);return`<div class="doc-card ${x?'expanded':''}"><div class="doc-card-header" data-action="toggle" data-value="${esc(cn)}-${i}"><div><div class="doc-card-id">${dl(d,i)}</div>${dm(d)?`<div class="doc-card-meta">${dm(d)}</div>`:''}</div><span class="doc-card-toggle">▶</span></div><div class="doc-card-body"><div class="json-tree">${x?fj(d):''}</div></div></div>`}).join('')}${lim?`<div style="padding:20px;text-align:center;color:var(--t3)">Showing ${mx}/${docs.length}</div>`:''}</div>`}
+function rRaw(d){const j=JSON.stringify(d,null,2);return`<pre class="raw-json">${esc(j.length>500000?j.slice(0,500000)+'\n…':j)}</pre>`}
+
+// Interactions
+function sDrop(){const z=document.getElementById('dz'),f=document.getElementById('fi');if(!z||!f)return;z.onclick=()=>f.click();f.onchange=e=>{if(e.target.files[0])proc(e.target.files[0])};z.ondragover=e=>{e.preventDefault();z.classList.add('dragover')};z.ondragleave=()=>z.classList.remove('dragover');z.ondrop=e=>{e.preventDefault();z.classList.remove('dragover');if(e.dataTransfer.files[0])proc(e.dataTransfer.files[0])}}
+function sA(n){S.act=n;S.df='';S.exp.clear();S.vm='cards';render()}
+function uSF(v){S.sf=v;render()}function uDF(v){S.df=v;S.exp.clear();render()}function sVM(m){S.vm=m;render()}
+function tD(id){S.exp.has(id)?S.exp.delete(id):S.exp.add(id);render()}
+function reset(){logs=[];S={phase:'drop',step:'',fn:'',fs:0,colls:{},act:null,sf:'',df:'',exp:new Set(),vm:'cards'};render()}
+function gf(){if(!S.sf)return S.colls;const f=S.sf.toLowerCase(),r={};for(const[n,d]of Object.entries(S.colls)){const m=gm(n);if(n.toLowerCase().includes(f)||m.label.toLowerCase().includes(f))r[n]=d}return r}
+function fSz(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';return(b/1048576).toFixed(1)+' MB'}
+function toast(m,t='success'){const x=document.querySelector('.toast');if(x)x.remove();const e=document.createElement('div');e.className=`toast ${t}`;e.textContent=m;document.body.appendChild(e);setTimeout(()=>e.remove(),6000)}
+function eC(n){
+  if(SENSITIVE_COLLS.has(n)&&!confirm(`"${n}" may contain credentials (passwords, keys, secrets).\nThe export will include them in cleartext.\n\nContinue?`))return;
+  const j=JSON.stringify(S.colls[n],null,2);dlf(`${n}.json`,j,'application/json');toast(`Exported ${n}.json`);
+}
+function eAll(){
+  const sensitive=Object.keys(S.colls).filter(n=>SENSITIVE_COLLS.has(n));
+  if(sensitive.length&&!confirm('This export includes collections that may contain credentials (passwords, keys, secrets) in cleartext.\n\nCollections: '+sensitive.join(', ')+'\n\nContinue?'))return;
+  const z=new JSZip();for(const[n,d]of Object.entries(S.colls))z.file(`${n}.json`,JSON.stringify(d,null,2));
+  z.generateAsync({type:'blob'}).then(b=>{const u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=S.fn.replace('.unf','')+'_export.zip';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);toast('Exported all as ZIP')}).catch(e=>{toast('Export failed: '+e.message,'error')});
+}
+function dlf(name,content,type){const b=new Blob([content],{type}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
+
+// Event delegation — replaces inline onclick/oninput handlers to prevent injection
+document.getElementById('app').addEventListener('click',function(e){
+  const el=e.target.closest('[data-action]');if(!el)return;
+  const a=el.dataset.action,v=el.dataset.value;
+  if(a==='select')sA(v||null);
+  else if(a==='export')eC(v);
+  else if(a==='export-all')eAll();
+  else if(a==='toggle')tD(v);
+  else if(a==='view-mode')sVM(v);
+  else if(a==='reset')reset();
+});
+document.getElementById('app').addEventListener('input',function(e){
+  if(e.target.classList.contains('search-box'))uSF(e.target.value);
+  else if(e.target.closest('.content-filter'))uDF(e.target.value);
+});
+document.getElementById('fileInfo').addEventListener('click',function(e){
+  if(e.target.closest('[data-action="reset"]'))reset();
+});
+
+// Firewall rule type strings used in UniFi v10.x zone-based policy engine
+const FW_RULE_TYPES = new Set(['ZONED_IN','ZONED_WAN_BLOCK','ZONED_WAN_ALLOW','ZONED_IN_ALLOW','ZONED_IN_BLOCK','ZONED_IN_FILTER','ZONED_WAN_PORT_FORWARD','CUSTOM_IN_BLOCK','CUSTOM_IN_ALLOW','CUSTOM_LOCAL_ALLOW','LOCAL_CUSTOM_ALLOW','FIREWALL_POLICY','WAN_IN','WAN_IN_ALLOW','WAN_IN_BLOCK','WAN_LOCAL_ALLOW','WAN_LOCAL_BLOCK','WAN_LOCAL_VPN','WAN_LOCAL_WAN','WAN_WAN_LOCAL','WAN_WAN_IN','WAN_PORT_FORWARD','LAN_IN_ALLOW','LAN_IN_BLOCK','LAN_LOCAL_ALLOW','LOCAL_LAN_ALLOW','GUEST_IN_BLOCK','GUEST_IN_ALLOW','GUEST_LOCAL_BLOCK','GUEST_LOCAL_ALLOW','LOCAL_GUEST_ALLOW','DMZ_IN_BLOCK','DMZ_IN_ALLOW','DMZ_LOCAL_ALLOW','DMZ_LOCAL_BLOCK','LOCAL_DMZ_ALLOW','VPN_IN_ALLOW','VPN_IN_BLOCK','VPN_LOCAL_ALLOW','LOCAL_VPN_ALLOW','VPN_ZONED_PORT_FORWARD','ACCOUNTING_PORT_FORWARD','NAT_WAN_MASQUERADE','FORWARD_IN','LOCAL_WAN_ALLOW']);
+
+// Categorize BSON docs — comprehensive v10.x categorizer
+function cat(d){
+  // Tombstones — deletion records (delete_time + reference_id). Must be first.
+  if(d.delete_time!==undefined&&d.reference_id!==undefined)return'tombstone';
+
+  // Schema descriptor docs — __cmd select statements
+  if(d.__cmd!==undefined)return'schema';
+
+  // Settings — key field with or without site_id (super_* settings have no site_id)
+  if(d.key!==undefined&&(d.site_id!==undefined||String(d.key).startsWith('super_')))return'setting';
+
+  // Firewall — zone-based (v7.x+)
+  if(d.zone_key!==undefined||d.zone_members!==undefined)return'firewallzone';
+  if(d.src_zone!==undefined&&d.dst_zone!==undefined)return'zonematrix';
+
+  // Firewall — v10.x typed policy rules (ZONED_IN, WAN_IN_BLOCK etc.)
+  if(d.type!==undefined&&FW_RULE_TYPES.has(d.type))return'firewallrule';
+
+  // Firewall — classic rules
+  if(d.ruleset!==undefined||d.rule_index!==undefined||d.action_group_id!==undefined)return'firewallrule';
+  if(d.group_members!==undefined&&d.group_type!==undefined)return'firewallgroup';
+
+  // Traffic rules / routes (v7.x+)
+  if(d.matching_target!==undefined&&d.action!==undefined&&!d.ruleset)return'trafficrule';
+  if(d.type==='VLAN'&&d.target!==undefined&&d.in_interface!==undefined)return'trafficroute';
+  if(d.next_hop!==undefined||(d.type==='route'&&d.network!==undefined))return'trafficroute';
+  if(d.type==='static-route'||d.static_route_network!==undefined)return'routing';
+
+  // Port forward
+  if(d.pfwd_interface!==undefined||(d.fwd!==undefined&&d.dst_port!==undefined))return'portforward';
+
+  // Networks / VLANs — including WAN interfaces (purpose=wan)
+  if(d.purpose!==undefined&&(d.networkgroup!==undefined||d.ip_subnet!==undefined||d.dhcpd_enabled!==undefined||d.vlan_enabled!==undefined||d.wan_type!==undefined||d.wan_networkgroup!==undefined))return'networkconf';
+  if(d.purpose==='corporate'||d.purpose==='guest'||d.purpose==='vlan-only'||d.purpose==='wan')return'networkconf';
+
+  // WiFi
+  if(d.essid!==undefined||d.wlan_band!==undefined||(d.security!==undefined&&d.name!==undefined&&d.wpa_mode!==undefined))return'wlanconf';
+
+  // Switch port profiles (portconf) — must check before device
+  if(d.port_overrides!==undefined&&d.mac===undefined)return'portconf';
+  if(d.poe_mode!==undefined&&d.op_mode!==undefined&&d.mac===undefined)return'portconf';
+
+  // DHCP
+  if(d.dhcpd_dns_1!==undefined||d.dhcpd_gateway_enabled!==undefined||(d.subnet!==undefined&&d.dhcpd_enabled!==undefined&&!d.purpose))return'dhcpd';
+
+  // Device config snapshot (UDM system_config blob)
+  if(d.device_type!==undefined&&d.mac!==undefined&&d.system_config!==undefined)return'device';
+
+  // Devices (must come before user — devices have model)
+  if(d.mac!==undefined&&d.model!==undefined)return'device';
+
+  // Known clients / users
+  if(d.mac!==undefined&&(d.hostname!==undefined||d.name!==undefined||d.oui!==undefined)&&d.model===undefined)return'user';
+
+  // User groups
+  if(d.attr_hidden_id==='usergroup'||d.qos_rate_max_down!==undefined)return'usergroup';
+
+  // WLAN groups
+  if(d.attr_hidden_id==='wlangroup'||(d.roam_mode!==undefined&&d.name!==undefined))return'wlangroup';
+
+  // Network groups / IP groups
+  if(d.attr_hidden_id==='networkgroup'||(d.group_type==='address-group'))return'networkgroup';
+  if(d.group_type==='ipv4-address-group'||d.group_type==='ipv6-address-group')return'ipgroup';
+
+  // RADIUS
+  if(d.x_password!==undefined&&d.tunnel_type===undefined)return'account';
+  if(d.radius_auth_type!==undefined||d.radius_ip_1!==undefined||d.attr_hidden_id==='radiusprofile')return'radiusprofile';
+
+  // Hotspot / vouchers / guest tokens
+  if(d.note!==undefined&&d.quota!==undefined&&d.duration!==undefined)return'voucher';
+  if(d.hotspot_package_id!==undefined||d.attr_hidden_id==='hotspotpackage')return'hotspot';
+  if(d.end!==undefined&&d.ap_mac!==undefined&&d.site_id!==undefined&&d.authorized!==undefined)return'guesttoken';
+
+  // DPI
+  if(d.app_id!==undefined&&d.cat_id!==undefined)return'dpiapp';
+  if(d.dpiapp_ids!==undefined||d.attr_hidden_id==='dpigroup')return'dpigroup';
+
+  // Tags
+  if(d.member_table!==undefined||(d.tag_type!==undefined&&d.name!==undefined))return'tag';
+
+  // Scheduled tasks
+  if(d.job!==undefined||(d.schedule!==undefined&&d.action!==undefined))return'scheduletask';
+
+  // VPN / WireGuard / Teleport
+  if(d.wg_public_key!==undefined||d.wg_private_key!==undefined||(d.public_key!==undefined&&d.allowed_ips!==undefined))return'wireguard';
+  if(d.teleport!==undefined||d.attr_hidden_id==='teleport')return'teleport';
+  if(d.vpn_type!==undefined||d.l2tp_interface!==undefined)return'vpnclient';
+
+  // System / health / stats
+  if(d.subsystem!==undefined&&d.status!==undefined&&d.num_user!==undefined)return'health';
+  if(d.subsystem!==undefined&&d.key!==undefined&&d.site_id===undefined)return'alarm';
+  if(d.datetime!==undefined&&d.subsystem!==undefined&&d.key!==undefined)return'event';
+  if(d.time!==undefined&&d.bytes!==undefined)return'stat';
+
+  // Privileges
+  if(d.permissions!==undefined&&d.role!==undefined)return'privilege';
+
+  // Site info
+  if(d.attr_hidden_id==='site'||(d.country_code!==undefined&&d.timezone!==undefined&&d.name!==undefined))return'site';
+
+  return null;
+}
+
+// ============================================================
+// MAIN PROCESSOR
+// ============================================================
+async function proc(file){
+  logs=[];set({phase:'processing',fn:file.name,fs:file.size,step:'Reading…'});await wait(50);
+  try{
+    const fn=file.name.toLowerCase();
+    if(fn.includes('unifi_os_backup')||fn.includes('unifi_core_backup')||fn.endsWith('.unifi'))
+      throw new Error('Wrong backup type! This is a UniFi OS System backup.\nUse Network Application backup (.unf) from:\nSettings → Control Plane → Backups');
+
+    log('info',`File: ${file.name} (${fSz(file.size)})`);
+    const ab=await file.arrayBuffer();
+    const hd=new Uint8Array(ab.slice(0,16));
+    log('info',`Header: ${Array.from(hd).map(b=>b.toString(16).padStart(2,'0')).join(' ')}`);
+
+    let zipBuf;
+    if(hd[0]===0x50&&hd[1]===0x4B){log('info','Already a ZIP');zipBuf=ab}
+    else{
+      set({step:'Decrypting AES-128-CBC…'});await wait(50);
+      const dec=await decrypt(ab);
+      const dh=new Uint8Array(dec).slice(0,16);
+      log('info',`Decrypted header: ${Array.from(dh).map(b=>b.toString(16).padStart(2,'0')).join(' ')}`);
+
+      // KEY FIX: Pad decrypted data to handle UniFi's known zip corruption (off-by-one)
+      // UniFi backups are known to produce malformed zips that need `zip -FF` repair
+      // The zip metadata references bytes beyond the actual data boundary
+      // Adding padding bytes fixes this without needing external zip repair
+      const padSize = 4096; // Extra padding bytes
+      const padded = new Uint8Array(dec.byteLength + padSize);
+      padded.set(new Uint8Array(dec));
+      // Fill padding with zeros (safe for zip - will be ignored beyond actual data)
+      const paddedBuf = padded.buffer;
+      log('info', `Padded decrypted data: ${dec.byteLength} → ${paddedBuf.byteLength} bytes (+${padSize} padding for zip repair)`);
+
+      if(dh[0]===0x50&&dh[1]===0x4B){log('ok','Valid ZIP after decrypt');zipBuf=paddedBuf}
+      else{
+        log('warn','No ZIP header at offset 0, scanning…');
+        const found=findPK(paddedBuf);
+        if(!found)throw new Error('No ZIP data found after decryption');
+        zipBuf=found;
+      }
+    }
+
+    // Parse ZIP — 3-stage fallback
+    set({step:'Extracting zip…'});await wait(50);
+
+    // Stage 1: Normal JSZip parse
+    // Stage 2: Re-locate PK header and retry
+    // Stage 3: Manual local-header scan (handles missing/corrupt central directory)
+    let entries_raw = null; // [{name, getData()}]
+
+    try{
+      const zip = await JSZip.loadAsync(zipBuf);
+      const names = Object.keys(zip.files).filter(e=>!zip.files[e].dir);
+      entries_raw = names.map(n=>({name:n, getData:()=>zip.files[n].async('arraybuffer')}));
+      log('ok',`ZIP parsed normally: ${names.join(', ')}`);
+    }catch(e1){
+      log('warn',`ZIP attempt 1 failed: ${e1.message}`);
+      // Stage 2: find PK offset and retry
+      try{
+        const found = findPK(zipBuf);
+        if(found){
+          const zip2 = await JSZip.loadAsync(found);
+          const names = Object.keys(zip2.files).filter(e=>!zip2.files[e].dir);
+          entries_raw = names.map(n=>({name:n, getData:()=>zip2.files[n].async('arraybuffer')}));
+          log('ok',`ZIP parsed from PK offset: ${names.join(', ')}`);
+        }
+      }catch(e2){log('warn',`ZIP attempt 2 failed: ${e2.message}`);}
+
+      // Stage 3: manual local-header scan — bypass central directory entirely
+      if(!entries_raw){
+        log('warn','Falling back to manual local-header scan…');
+        entries_raw = manualZipScan(zipBuf);
+        if(entries_raw.length) log('ok',`Manual scan found ${entries_raw.length} entries: ${entries_raw.map(e=>e.name).join(', ')}`);
+        else throw new Error('No ZIP entries found by any method');
+      }
+    }
+
+    // Parse BSON
+    set({step:'Parsing database…'});await wait(50);
+    const colls={};
+
+    for(const entry of entries_raw){
+      let data = await entry.getData();
+      let fname = entry.name.split('/').pop();
+      log('info',`${fname} (${fSz(data.byteLength)})`);
+
+      if(fname.endsWith('.gz')){
+        try{data=pako.inflate(new Uint8Array(data)).buffer;fname=fname.replace('.gz','');log('ok',`Decompressed → ${fSz(data.byteLength)}`)}
+        catch(e){log('warn',`Decompress fail: ${e.message}`);continue}
+      }
+
+      if(fname.endsWith('.bson')){
+        const cn=fname.replace('.bson','');
+        const docs=BSON.all(data);
+        log('ok',`${cn}: ${docs.length} docs`);
+        if(docs.length)colls[cn]=docs;
+      }else if(fname==='db'){
+        const docs=BSON.all(data);
+        log('ok',`db dump: ${docs.length} total docs`);
+        let unc=0;
+        for(const d of docs){const cn=cat(d)||'uncategorized';if(cn==='uncategorized')unc++;if(!colls[cn])colls[cn]=[];colls[cn].push(d)}
+        if(unc)log('warn',`${unc} uncategorized docs`);
+      }
+    }
+
+    if(!Object.keys(colls).length)throw new Error('No collections found in backup');
+    const sorted={};Object.keys(colls).sort().forEach(k=>sorted[k]=colls[k]);
+    const td=Object.values(sorted).reduce((s,d)=>s+d.length,0);
+    log('ok',`✓ ${Object.keys(sorted).length} collections, ${td} documents`);
+    set({phase:'ready',colls:sorted,act:null,step:''});
+    toast(`Decrypted: ${Object.keys(sorted).length} collections, ${td.toLocaleString()} docs`);
+  }catch(err){console.error(err);log('err',err.message);toast(err.message,'error');set({step:'❌ '+err.message})}
+}
+
+// Manual ZIP local-header scanner — parses entries without central directory
+// Handles UniFi backups where central directory is missing or corrupt
+function manualZipScan(buf){
+  const b = new Uint8Array(buf);
+  const entries = [];
+  let i = 0;
+  while(i < b.length - 30){
+    // Look for PK\x03\x04 local file header
+    if(b[i]===0x50&&b[i+1]===0x4B&&b[i+2]===0x03&&b[i+3]===0x04){
+      try{
+        const v = new DataView(buf);
+        const flags      = v.getUint16(i+6,  true);
+        const method     = v.getUint16(i+8,  true);
+        let   crc32      = v.getUint32(i+14, true);
+        let   compressed = v.getUint32(i+18, true);
+        let   uncompressed = v.getUint32(i+22, true);
+        const fnLen      = v.getUint16(i+26, true);
+        const extraLen   = v.getUint16(i+28, true);
+        const nameBytes  = b.slice(i+30, i+30+fnLen);
+        const name       = new TextDecoder().decode(nameBytes);
+        const dataStart  = i + 30 + fnLen + extraLen;
+
+        // If data descriptor flag is set (bit 3), sizes may be 0 — scan for next PK
+        if((flags & 0x08) && compressed === 0){
+          // Find next PK\x03\x04 or PK\x01\x02 (central dir) to determine size
+          let nextPK = dataStart;
+          while(nextPK < b.length - 4){
+            if(b[nextPK]===0x50&&b[nextPK+1]===0x4B&&(b[nextPK+2]===0x03||b[nextPK+2]===0x01||b[nextPK+2]===0x05))break;
+            nextPK++;
+          }
+          // Step back over data descriptor (16 bytes: sig+crc+comp+uncomp) if present
+          if(nextPK > dataStart + 16 && b[nextPK-16]===0x50&&b[nextPK-15]===0x4B&&b[nextPK-14]===0x07&&b[nextPK-13]===0x08)
+            compressed = nextPK - dataStart - 16;
+          else
+            compressed = nextPK - dataStart;
+        }
+
+        if(compressed > 0 && dataStart + compressed <= b.length && name){
+          const compData = buf.slice(dataStart, dataStart + compressed);
+          const capturedMethod = method;
+          const capturedUncompressed = uncompressed;
+          entries.push({
+            name,
+            getData: async () => {
+              if(capturedMethod === 0) return compData; // stored
+              if(capturedMethod === 8){ // deflate
+                try{
+                  // pako inflate with raw deflate
+                  return pako.inflateRaw(new Uint8Array(compData)).buffer;
+                }catch(e){
+                  log('warn',`Manual inflate failed for ${name}: ${e.message}`);
+                  return compData;
+                }
+              }
+              return compData;
+            }
+          });
+          log('info',`Manual scan: ${name} method=${method} compressed=${fSz(compressed)}`);
+          i = dataStart + compressed;
+          continue;
+        }
+      }catch(e){log('warn',`Manual scan error @ ${i}: ${e.message}`);}
+    }
+    i++;
+  }
+  return entries;
+}
+
+function findPK(buf){const b=new Uint8Array(buf);for(let i=0;i<b.length-4;i++){if(b[i]===0x50&&b[i+1]===0x4B&&b[i+2]===0x03&&b[i+3]===0x04){log('ok',`PK signature @ byte ${i}`);return buf.slice(i)}}return null}
+function wait(ms){return new Promise(r=>setTimeout(r,ms))}
+
+render();
+</script>
+</body>
+</html>
