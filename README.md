@@ -51,11 +51,7 @@ The encryption key used by UniFi backups is a publicly documented constant. This
 
 ## Audit history
 
-The code has been through multiple security review passes:
-
-- Initial Opus red team and Gemini passes before first publication
-- Claude Code `/review` and `/security-review` on Sonnet 4.6
-- Claude Code `/ultrareview` on Opus 4.7
+The code has been through multiple security review passes, before first publication and after major changes.
 
 Findings addressed include XSS escaping, event delegation, BSON parser hardening (bounds checking, recursion limits, prototype pollution protection), credential export warnings, CSP improvements, and SRI integrity hashes. See the commit history for details.
 
