@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest something the tool should show, export or do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task or question you had when you opened a backup, and where the tool fell short.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help
+      description: What you would like the tool to show or do. Mention the UniFi setting or collection involved if you know it.

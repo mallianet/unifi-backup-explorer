@@ -1,0 +1,66 @@
+name: Backup didn't load or something looks wrong
+description: A .unf file fails to decrypt or parse, or a collection or the audit report shows the wrong thing
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not attach your `.unf` backup, exported JSON, or screenshots showing passphrases or keys.**
+        Anyone can read issues here, and a backup decrypts with a public key, so it would expose your
+        WiFi passwords, VPN keys and RADIUS/PPPoE credentials. The details below are enough to start.
+  - type: input
+    id: unifi-version
+    attributes:
+      label: UniFi Network Application version
+      description: The version that made the backup, e.g. 10.0.162. Shown in the UniFi web UI under Settings.
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Where the backup came from
+      options:
+        - Cloud Gateway / UniFi OS console (UDM, UCG, UDR, UX, etc.)
+        - Self-hosted Network Application (Linux, Windows, Docker)
+        - CloudKey
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: backup-type
+    attributes:
+      label: Backup type
+      options:
+        - Manual backup downloaded from the UI
+        - Autobackup
+        - Not sure
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and OS
+      placeholder: e.g. Firefox 140 on Windows 11
+    validations:
+      required: true
+  - type: dropdown
+    id: how-opened
+    attributes:
+      label: How you opened the tool
+      options:
+        - Hosted page (mallianet.github.io)
+        - Downloaded index.html, opened from disk
+        - Self-hosted
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, what you saw instead, and which collection or report section it was in.
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Error message
+      description: |
+        The error shown on the page, plus anything in the browser console (F12 → Console).
+        Check it for passphrases, keys or public IPs before posting.
+      render: text
