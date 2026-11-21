@@ -25,7 +25,7 @@ This tool does everything in the browser. Drag the `.unf` file onto the page, re
 - **Grouped navigation** — Security / Network / Devices / System / Other
 - **Live filter** — search across collections and documents
 - **Credential-aware** — warns on export that JSON contains plaintext WiFi passphrases, WireGuard keys, PPPoE passwords, and RADIUS secrets
-- **UniFi Network 10.x aware** — tested against current backup format
+- **UniFi Network 10.x and 11.x** — reads both the MongoDB backup format (Network 10 and earlier) and the PostgreSQL format introduced in Network 11, which is mapped back to the same collection names so the audit report works for either
 
 ## How to use
 
