@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data:; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'">
-<title>UniFi Backup Explorer v2.2</title>
+<title>UniFi Backup Explorer v2.3</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg==" crossorigin="anonymous"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js" integrity="sha512-g2TeAWw5GPnX7z0Kn8nFbYfeHcvAu/tx6d6mrLe/90mkCxO+RcptyYpksUz35EO337F83bZwcmUyHiHamspkfg==" crossorigin="anonymous"></script>
 <style>
@@ -71,7 +71,7 @@
 </style>
 </head>
 <body>
-<div class="header"><div class="header-left"><div class="logo">UB</div><div><h1>UniFi Backup Explorer <span style="font-size:11px;color:var(--cyan);font-family:var(--mono)">v2.2</span></h1><div class="header-subtitle">Client-Side Decryptor · v10.x Aware</div></div></div><div class="file-info" id="fileInfo"></div></div>
+<div class="header"><div class="header-left"><div class="logo">UB</div><div><h1>UniFi Backup Explorer <span style="font-size:11px;color:var(--cyan);font-family:var(--mono)">v2.3</span></h1><div class="header-subtitle">Client-Side Decryptor · Network 10 &amp; 11</div></div></div><div class="file-info" id="fileInfo"></div></div>
 <div id="app"></div>
 <script>
 // HTML escape — prevents XSS when inserting untrusted strings into innerHTML
@@ -92,6 +92,64 @@ class BSON{
   arr(){if(++this.d>20){this.d--;throw new Error('BSON nesting too deep')}try{const sz=this.i32(),end=this.o-4+sz,a=[];while(this.o<end-1){const t=this.u8();if(!t)break;this.cstr();a.push(this.val(t))}this.o=end;return a}finally{this.d--}}
   val(t){switch(t){case 1:return this.f64();case 2:return this.str();case 3:return this.doc();case 4:return this.arr();case 5:return this.bin();case 6:return undefined;case 7:return{$oid:this.oid()};case 8:return this.u8()!==0;case 9:{const ms=this.i64();try{return{$date:new Date(ms).toISOString()}}catch(e){return{$date:'invalid',$dateMs:ms}}};case 10:return null;case 11:{const p=this.cstr(),f=this.cstr();return{$regex:p,$options:f}};case 13:return this.str();case 16:return this.i32();case 17:case 18:return this.i64();case 255:return{$minKey:1};case 127:return{$maxKey:1};default:throw new Error(`BSON type 0x${t.toString(16)} @${this.o}`)}}
   static all(buf){const d=new BSON(buf),docs=[];let e=0;while(d.o<d.l-4){try{if(d.l-d.o<5)break;const sz=d.v.getInt32(d.o,!0);if(sz<5||sz>d.l-d.o)break;docs.push(d.doc())}catch(x){e++;if(e>10)break;d.o++}}return docs}
+}
+
+// PostgreSQL table dump — UniFi Network 11+
+// Network 11 moved from MongoDB to PostgreSQL. Its backups carry
+// db-<schema>.jsonl.gz instead of db.gz: JSON Lines where a
+// {"_t":"table",schema,table,columns} line opens each table and is followed by
+// {"_t":"row","v":[…]} lines holding values in column order. Typed cells are
+// wrapped — {"_vt":"uuid","value":…} and {"_vt":"jsonb","json":"<json text>"} —
+// and fields without a column of their own sit in a `dynamic_part` jsonb object.
+// Merging that back gives each row the shape of the v10 document it replaced.
+const PG_SKIP_KEYS=new Set(['__proto__','constructor','prototype']);
+// v11 table → the collection name this tool already uses for v10 backups, so
+// labels, the sensitive-collection list and the audit report apply unchanged.
+// Device config snapshots were filed under `device` in v10; they still are.
+const PG_TABLES={
+  network_conf:'networkconf',wlan_conf:'wlanconf',firewall_zone:'firewallzone',
+  firewall_policy:'firewallpolicy',predefined_firewall_rule:'firewallrule',
+  firewall_group:'firewallgroup',port_conf:'portconf',port_forward:'portforward',
+  traffic_route:'trafficroute',user_client:'user',user_group:'usergroup',
+  radius_profile:'radiusprofile',radius_user:'account',schedule_task:'scheduletask',
+  wireguard_user:'wireguard',diagnostics_config:'device',hotspot_package:'hotspot',
+  guest_authorization:'guesttoken',
+};
+const hasOwn=(o,k)=>Object.prototype.hasOwnProperty.call(o,k);
+function pgCell(v){
+  if(v===null||typeof v!=='object'||Array.isArray(v)||!hasOwn(v,'_vt'))return v;
+  if(hasOwn(v,'json')){const j=v.json;if(typeof j!=='string')return j;try{return JSON.parse(j)}catch(e){return j}}
+  return v.value;
+}
+function pgRow(cols,vals){
+  const d={};let dyn=null;
+  for(let i=0;i<cols.length;i++){
+    const c=cols[i];if(PG_SKIP_KEYS.has(c))continue;
+    const v=pgCell(vals[i]);
+    if(c==='dynamic_part'){if(v&&typeof v==='object'&&!Array.isArray(v))dyn=v;else if(v!=null)d.dynamic_part=v;continue}
+    d[c==='id'?'_id':c]=v;
+  }
+  // Columns win over dynamic_part — they are the authoritative copy.
+  if(dyn)for(const k of Object.keys(dyn))if(!PG_SKIP_KEYS.has(k)&&!hasOwn(d,k))d[k]=dyn[k];
+  return d;
+}
+function pgTables(buf){
+  const tables=[];let cur=null,bad=0;
+  for(const line of new TextDecoder().decode(new Uint8Array(buf)).split('\n')){
+    if(!line.trim())continue;
+    let o;try{o=JSON.parse(line)}catch(e){bad++;continue}
+    if(o&&o._t==='table'&&Array.isArray(o.columns)){cur={schema:String(o.schema||''),table:String(o.table||''),columns:o.columns.map(String),rows:[]};tables.push(cur)}
+    else if(o&&o._t==='row'&&cur&&Array.isArray(o.v))cur.rows.push(pgRow(cur.columns,o.v));
+    else bad++;
+  }
+  return{tables,bad};
+}
+// Collection name for a v11 table. Tables outside the main `config` schema are
+// prefixed with their schema so they cannot collide with a config table.
+function pgCollName(t){
+  if(!t.table)return null;
+  const n=t.schema&&t.schema!=='config'?`${t.schema}.${t.table}`:(PG_TABLES[t.table]||t.table);
+  return PG_SKIP_KEYS.has(n)?null:n;
 }
 
 // Publicly documented UniFi Network Application backup encryption constants.
@@ -154,11 +212,28 @@ const CM={
   teleport:{l:'Teleport VPN',c:'#10b981',g:'Network'},
   tombstone:{l:'Deleted Records',c:'#3d5068',g:'System'},
   schema:{l:'Schema Descriptors',c:'#3d5068',g:'System'},
+  // Tables that first appear in Network 11 backups
+  nat_rule:{l:'NAT Rules',c:'#f59e0b',g:'Security'},qos_rule:{l:'QoS Rules',c:'#f59e0b',g:'Security'},
+  content_filtering:{l:'Content Filtering',c:'#ef4444',g:'Security'},acl_rule:{l:'ACL Rules',c:'#ef4444',g:'Security'},
+  simple_app_block:{l:'App Blocks',c:'#ef4444',g:'Security'},
+  ap_group:{l:'AP Groups',c:'#8b5cf6',g:'Network'},static_dns:{l:'Static DNS',c:'#3b82f6',g:'Network'},
+  dynamic_dns:{l:'Dynamic DNS',c:'#3b82f6',g:'Network'},vpn_server_user_record:{l:'VPN Server Sessions',c:'#10b981',g:'Network'},
+  admin:{l:'Admins',c:'#10b981',g:'Auth'},api_key:{l:'API Keys',c:'#10b981',g:'Auth'},
+  api_key_privilege:{l:'API Key Privileges',c:'#10b981',g:'Auth'},ulp_user:{l:'Identity Users',c:'#10b981',g:'Auth'},
+  ulp_user_group:{l:'Identity Groups',c:'#10b981',g:'Auth'},hotspot_operation:{l:'Hotspot Operators',c:'#8b5cf6',g:'Auth'},
+  channel_plan:{l:'Channel Plans',c:'#22d3ee',g:'Devices'},power_supervisor:{l:'Power Supervisor',c:'#22d3ee',g:'Devices'},
+  config_meta:{l:'Device Config Meta',c:'#22d3ee',g:'Devices'},
+  id_mapping:{l:'Legacy ID Map (v10 → v11)',c:'#3d5068',g:'System'},feature_migration:{l:'Feature Migrations',c:'#3d5068',g:'System'},
+  network_offline:{l:'Offline Periods',c:'#6b7d93',g:'System'},
 };
 function gm(n){const m=CM[n];return m?{label:m.l,color:m.c,group:m.g}:{label:n,color:'#6b7d93',group:'Other'}}
 
 // Collections known to contain credentials (WiFi passwords, RADIUS secrets, VPN keys, etc.)
-const SENSITIVE_COLLS=new Set(['wlanconf','wireguard','vpnclient','account','setting','radiusprofile','device','user']);
+const SENSITIVE_COLLS=new Set(['wlanconf','wireguard','vpnclient','account','setting','radiusprofile','device','user',
+  // Network 11 tables: network_conf now carries the WireGuard private key too;
+  // the rest hold passwords, session/identity keys, OAuth tokens or pairing secrets.
+  'networkconf','hotspot_operation','dynamic_dns','vpn_server_user_record','sso_oauth_token','teleport_token',
+  'matter_controller_credentials','matter_node','thread_dataset','payment']);
 
 // Debug log
 let logs=[];
@@ -239,7 +314,11 @@ function dlf(name,content,type){const b=new Blob([content],{type}),u=URL.createO
 // Matches secret-bearing field names. Deliberately does NOT match a bare `key`:
 // setting docs are keyed by `key` and zones carry `zone_key`, both non-secret —
 // collecting those would make the leak check abort on ordinary text.
-const AUDIT_FORBIDDEN=/passphrase|password|psk|secret|preshared|authkey|credential|token|(private|public|wep|iapp|wg|ssh|api|shared|identity|session)_?key/i;
+// `^x_` is UniFi's own marker for a secret field (x_vwirekey, x_ssh_hostkey,
+// x_mgmt_key, x_ssh_sha512passwd, …) and catches the ones no word above names.
+// Except *essid: x_element_essid / x_mesh_essid are SSID names, and one is the
+// name of a WLAN the report lists — matching it would abort every export.
+const AUDIT_FORBIDDEN=/^x_(?!.*essid$)|passphrase|password|passwd|psk|secret|preshared|authkey|credential|token|(private|public|wep|iapp|wg|ssh|api|shared|identity|session)_?key/i;
 // Collections the report reads from — also the search space for the leak check.
 // `device` is included for the custom-zone slot map below; only zone names are
 // ever read from it, but listing it here keeps it inside the leak check.
@@ -294,6 +373,9 @@ function aPrune(headers,rows,optional,minFill){
 }
 
 function aSiteName(){
+  // Skip the hidden `super` site; v10 names the site in `desc`, v11 in `description`.
+  const sites=(S.colls.site||[]).filter(d=>!d.attr_hidden&&d.name!=='super');
+  for(const d of sites)if(d.desc||d.description||d.name)return String(d.desc||d.description||d.name);
   for(const d of S.colls.site||[])if(d.desc||d.name)return String(d.desc||d.name);
   for(const d of S.colls.setting||[])if(d.key==='super_identity'&&d.name)return String(d.name);
   return'Unknown site';
@@ -452,7 +534,7 @@ function aWifiSecurity(w){
 function aWifiRows(netIdx){
   return(S.colls.wlanconf||[]).slice().sort((a,b)=>
     String(a.name||a.essid||'').localeCompare(String(b.name||b.essid||''))).map(w=>{
-    const n=netIdx[aOid(w.networkconf_id)];
+    const n=netIdx[aOid(w.networkconf_id||w.network_conf_id)];
     const vlan=w.vlan!==undefined&&w.vlan!==null&&w.vlan!==''?w.vlan:(n?n.vlan:undefined);
     return[aStr(w.name||w.essid),aWifiSecurity(w),n?aStr(n.name):'—',
       vlan===undefined||vlan===null||vlan===''?'untagged':String(vlan),
@@ -463,7 +545,7 @@ function aWifiRows(netIdx){
 // WireGuard — names only. Keys, addresses and endpoints are deliberately omitted.
 function aWgRows(netIdx){
   const rows=[];
-  const net=d=>{const n=netIdx[aOid(d.networkconf_id)];return n?aStr(n.name):'—'};
+  const net=d=>{const n=netIdx[aOid(d.networkconf_id||d.network_id)];return n?aStr(n.name):'—'};
   for(const d of S.colls.wireguard||[]){
     const iface=aStr(d.name||d.interface_name);
     const peers=Array.isArray(d.peers)?d.peers:(Array.isArray(d.wg_peers)?d.wg_peers:null);
@@ -775,18 +857,32 @@ async function proc(file){
     set({step:'Parsing database…'});await wait(50);
     const colls={};
     let ver='';
+    const skipped=[];
 
     for(const entry of entries_raw){
       let data = await entry.getData();
       let fname = entry.name.split('/').pop();
+      if(!fname)continue; // directory entry
       log('info',`${fname} (${fSz(data.byteLength)})`);
 
       if(fname.endsWith('.gz')){
+        // pako throws a bare string, not an Error — log whichever it is.
         try{data=pako.inflate(new Uint8Array(data)).buffer;fname=fname.replace('.gz','');log('ok',`Decompressed → ${fSz(data.byteLength)}`)}
-        catch(e){log('warn',`Decompress fail: ${e.message}`);continue}
+        catch(e){log('warn',`Decompress fail: ${(e&&e.message)||e}`);skipped.push(fname);continue}
       }
 
-      if(fname.endsWith('.bson')){
+      if(fname.endsWith('.jsonl')){
+        const{tables,bad}=pgTables(data);
+        let rows=0,used=0;
+        for(const t of tables){
+          const cn=pgCollName(t);
+          if(!cn||!t.rows.length)continue;
+          if(!hasOwn(colls,cn))colls[cn]=[];
+          for(const r of t.rows)colls[cn].push(r);
+          rows+=t.rows.length;used++;
+        }
+        log('ok',`${fname}: ${tables.length} tables (${used} with rows), ${rows} rows${bad?` — ${bad} unreadable lines`:''}`);
+      }else if(fname.endsWith('.bson')){
         const cn=fname.replace('.bson','');
         const docs=BSON.all(data);
         log('ok',`${cn}: ${docs.length} docs`);
@@ -805,9 +901,16 @@ async function proc(file){
         const m=txt.match(/\d+\.\d+(?:\.\d+)*(?:[-+][0-9A-Za-z.]+)?/);
         if(m){ver=m[0].slice(0,32);log('ok',`Controller version: ${ver}`)}
         else log('warn','version file present but held no recognisable version');
-      }
+      }else if(fname==='format'&&data.byteLength<=256){
+        // "bson" up to Network 10, "postgres_v1" from Network 11.
+        const f=new TextDecoder().decode(new Uint8Array(data)).trim().slice(0,32);
+        if(f)log('ok',`Backup format: ${f}`);
+      }else skipped.push(fname);
     }
 
+    // Name everything that was not read, so a future format change shows up in
+    // the log instead of failing silently.
+    if(skipped.length)log('info',`Not parsed (no collection data): ${skipped.join(', ')}`);
     if(!Object.keys(colls).length)throw new Error('No collections found in backup');
     const sorted={};Object.keys(colls).sort().forEach(k=>sorted[k]=colls[k]);
     const td=Object.values(sorted).reduce((s,d)=>s+d.length,0);
